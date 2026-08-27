@@ -1,0 +1,25 @@
+{
+  "name": "Centro Óptico de Colombia Group",
+  "short_name": "Centro Óptico",
+  "description": "Gestión de pacientes, jornadas visuales, brigadas y óptica.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#19071c",
+  "theme_color": "#8b168f",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
