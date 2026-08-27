@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#8b168f">
+  <title>Centro Óptico de Colombia Group</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div id="loading" class="loading"><span></span><p>Preparando Centro Óptico…</p></div>
+
+  <section id="authView" class="auth hidden">
+    <aside class="auth-brand">
+      <img src="./logo.png" alt="Centro Óptico de Colombia Group">
+      <div>
+        <h1>La operación de tu óptica, en un solo lugar.</h1>
+        <p>Pacientes, jornadas, consultas y recaudos con información segura y organizada.</p>
+      </div>
+      <small>Centro Óptico de Colombia Group</small>
+    </aside>
+    <main class="auth-panel">
+      <form id="loginForm" class="auth-card">
+        <img src="./logo.png" alt="" class="mobile-logo">
+        <h2>Bienvenido</h2>
+        <p>Ingresa con tu cuenta para continuar.</p>
+        <label>Correo electrónico<input id="loginEmail" type="email" autocomplete="email" required></label>
+        <label>Contraseña
+          <span class="password-field"><input id="loginPassword" type="password" autocomplete="current-password" minlength="8" required><button id="togglePassword" type="button">Mostrar</button></span>
+        </label>
+        <div class="auth-row"><label class="check"><input type="checkbox" checked> Recordarme</label><button type="button" class="link" id="resetBtn">Recuperar contraseña</button></div>
+        <button class="primary full" type="submit">Ingresar</button>
+        <button class="secondary full" type="button" id="firstAccountBtn">Crear primera cuenta</button>
+        <p id="authMessage" class="message"></p>
+      </form>
+    </main>
+  </section>
+
+  <div id="appView" class="app hidden">
+    <aside id="sidebar" class="sidebar">
+      <div class="brand"><img src="./logo.png" alt="Centro Óptico"><div><strong>Centro Óptico</strong><small>Colombia Group</small></div></div>
+      <nav>
+        <button class="nav active" data-view="dashboard">⌂ <span>Inicio</span></button>
+        <button class="nav" data-view="patients" data-permission="pacientes.ver">♙ <span>Pacientes</span></button>
+        <button class="nav" data-view="journeys" data-permission="jornadas.ver">◫ <span>Jornadas</span></button>
+        <button class="nav" data-view="brigades" data-permission="asistencia.ver|brigadas.ver">⌖ <span>Brigadas</span></button>
+        <button class="nav" data-view="appointments" data-permission="agenda.ver">▣ <span>Agenda</span></button>
+        <button class="nav" data-view="callcenter" data-permission="call_center.ver">☎ <span>Call Center CRM</span></button>
+        <button class="nav" data-view="consultations" data-permission="consultas.ver">◎ <span>Consultas</span></button>
+        <button class="nav" data-view="sales" data-permission="ventas.ver">◇ <span>Ventas</span></button>
+        <button class="nav" data-view="payments" data-permission="recaudos.ver|pagos.ver">$ <span>Recaudos</span></button>
+        <button class="nav" data-view="reports" data-permission="reportes.ver">▤ <span>Reportes</span></button>
+        <div class="nav-label">Administración</div>
+        <button class="nav" data-view="products" data-permission="productos.ver">□ <span>Tarifas y precios</span></button>
+        <button class="nav" data-view="users" data-permission="usuarios.ver|permisos.administrar">♧ <span>Usuarios y permisos</span></button>
+        <button class="nav" data-view="profile">⚙ <span>Mi perfil</span></button>
+      </nav>
+      <button id="logoutBtn" class="logout">↪ Cerrar sesión</button>
+    </aside>
+    <div id="backdrop" class="backdrop"></div>
+    <main class="main">
+      <header class="topbar">
+        <button id="menuBtn" class="menu">☰</button>
+        <div><strong id="pageName">Panel principal</strong><small>Centro Óptico de Colombia Group</small></div>
+        <div class="top-user"><span id="userInitials">YM</span><div><strong id="userName">Superadministrador</strong><small id="userRole">Cargando…</small></div></div>
+      </header>
+      <section id="content" class="content"></section>
+    </main>
+  </div>
+
+  <div id="patientModal" class="modal-layer hidden">
+    <form id="patientForm" class="modal">
+      <header><div><h2 id="patientModalTitle">Nuevo paciente</h2><p>Los campos marcados son obligatorios.</p></div><button type="button" data-close>×</button></header>
+      <input id="patientId" type="hidden">
+      <div class="form-grid">
+        <label>Tipo de identificación<select id="documentType" required><option value="CC">Cédula de ciudadanía</option><option value="TI">Tarjeta de identidad</option><option value="CE">Cédula de extranjería</option><option value="PA">Pasaporte</option></select></label>
+        <label>Número de identificación *<input id="documentNumber" required maxlength="30"></label>
+        <label class="wide">Nombre completo *<input id="fullName" required maxlength="140"></label>
+        <label>Celular principal *<input id="phone" type="tel" required maxlength="20"></label>
+        <label>Celular alternativo<input id="alternatePhone" type="tel" maxlength="20"></label>
+        <label>Género<select id="gender"><option value="">Seleccionar</option><option>Femenino</option><option>Masculino</option><option>Otro</option><option>Prefiere no indicar</option></select></label>
+        <label>Fecha de nacimiento<input id="birthDate" type="date"></label>
+        <div class="wide location-box"><strong>Ubicación del registro</strong><span id="patientLocationStatus">Se solicitará permiso para obtener la ubicación aproximada del dispositivo.</span><button type="button" id="retryLocation">Obtener ubicación</button></div>
+        <label class="wide">Observaciones<textarea id="notes" rows="3" maxlength="800"></textarea></label>
+      </div>
+      <p id="duplicateAlert" class="duplicate hidden"></p>
+      <footer><button type="button" class="secondary" data-close>Cancelar</button><button class="primary" type="submit">Guardar paciente</button></footer>
+    </form>
+  </div>
+  <div id="journeyModal" class="modal-layer hidden">
+    <form id="journeyForm" class="modal">
+      <header><div><h2 id="journeyModalTitle">Nueva jornada</h2><p>Programa una jornada visual de la óptica.</p></div><button type="button" data-close-journey>×</button></header>
+      <input id="journeyId" type="hidden">
+      <div class="form-grid">
+        <label class="wide">Nombre de la jornada *<input id="journeyName" required maxlength="140" placeholder="Ej. Jornada Visual Ayapel"></label>
+        <label>Departamento *<input id="journeyDepartment" value="Córdoba" required maxlength="80"></label>
+        <label>Municipio *<input id="journeyCity" required maxlength="80"></label>
+        <label>Fecha de la brigada *<input id="journeyDate" type="date" required></label>
+        <label>Valor de la consulta *<input id="journeyPrice" type="number" min="0" step="1000" required></label>
+        <label>Hora inicial<input id="journeyStart" type="time"></label>
+        <label>Hora final<input id="journeyEnd" type="time"></label>
+        <label class="wide">Lugar de atención *<input id="journeyPlace" required maxlength="180"></label>
+        <label class="wide">Dirección<input id="journeyAddress" maxlength="180"></label>
+        <label>Estado<select id="journeyStatus"><option value="abierta">Abierta para agendamiento</option><option value="inactiva">Inactiva para agendamiento</option><option value="cerrada">Cerrada definitivamente</option></select></label>
+        <label class="wide">Observaciones<textarea id="journeyNotes" rows="3" maxlength="800"></textarea></label>
+      </div>
+      <footer><button type="button" class="secondary" data-close-journey>Cancelar</button><button class="primary" type="submit">Guardar jornada</button></footer>
+    </form>
+  </div>
+  <div id="brigadeModal" class="modal-layer hidden">
+    <form id="brigadeForm" class="modal">
+      <header><div><h2 id="brigadeModalTitle">Nueva brigada</h2><p>Organiza el punto de atención y su capacidad.</p></div><button type="button" data-close-brigade>×</button></header>
+      <input id="brigadeId" type="hidden">
+      <div class="form-grid">
+        <label class="wide">Jornada *<select id="brigadeJourney" required></select></label>
+        <label class="wide">Nombre de la brigada *<input id="brigadeName" required maxlength="140" placeholder="Ej. Institución Educativa Central"></label>
+        <label>Fecha *<input id="brigadeDate" type="date" required></label>
+        <label>Estado<select id="brigadeStatus"><option value="programada">Programada</option><option value="en_ejecucion">En ejecución</option><option value="finalizada">Finalizada</option><option value="cancelada">Cancelada</option></select></label>
+        <label>Hora inicial<input id="brigadeStart" type="time"></label>
+        <label>Hora final<input id="brigadeEnd" type="time"></label>
+        <label>Capacidad máxima<input id="brigadeCapacity" type="number" min="1" value="50"></label>
+        <label class="wide">Lugar *<input id="brigadePlace" required maxlength="180"></label>
+        <label class="wide">Dirección<input id="brigadeAddress" maxlength="180"></label>
+        <label class="wide">Observaciones<textarea id="brigadeNotes" rows="3" maxlength="800"></textarea></label>
+      </div>
+      <footer><button type="button" class="secondary" data-close-brigade>Cancelar</button><button class="primary" type="submit">Guardar brigada</button></footer>
+    </form>
+  </div>
+  <div id="appointmentModal" class="modal-layer hidden">
+    <form id="appointmentForm" class="modal">
+      <header><div><h2 id="appointmentModalTitle">Nuevo agendamiento</h2><p>Relaciona un paciente con una jornada abierta.</p></div><button type="button" data-close-appointment>×</button></header>
+      <input id="appointmentId" type="hidden">
+      <div class="form-grid">
+        <label class="wide">Buscar paciente por nombre o identificación *
+          <input id="appointmentPatientSearch" autocomplete="off" required placeholder="Empieza a escribir el nombre o la cédula…">
+          <input id="appointmentPatient" type="hidden">
+          <span id="patientSearchResults" class="search-results hidden"></span>
+          <small id="selectedPatient" class="selected-record">Ningún paciente seleccionado</small>
+        </label>
+        <div class="wide patient-not-found hidden" id="patientNotFound">No encontramos ese paciente. <button type="button" id="createPatientFromAppointment">＋ Registrar paciente y continuar</button></div>
+        <label class="wide">Jornada abierta *<select id="appointmentJourney" required></select></label>
+        <label>Número de volante *<input id="appointmentFlyer" required maxlength="50"></label>
+        <label>Valor de consulta<input id="appointmentPrice" readonly></label>
+        <label>Abono recibido<input id="appointmentPayment" type="number" min="0" step="1000" value="0"></label>
+        <label>Saldo pendiente<input id="appointmentBalance" readonly></label>
+        <label class="wide">Observaciones<textarea id="appointmentNotes" rows="3" maxlength="800"></textarea></label>
+      </div>
+      <footer><button type="button" class="secondary" data-close-appointment>Cancelar</button><button class="primary" type="submit">Guardar agendamiento</button></footer>
+    </form>
+  </div>
+  <div id="callModal" class="modal-layer hidden">
+    <form id="callForm" class="modal small-modal">
+      <header><div><h2>Registrar gestión</h2><p id="callPatientName">Paciente</p></div><button type="button" data-close-call>×</button></header>
+      <input id="callAppointmentId" type="hidden">
+      <div class="form-grid">
+        <label class="wide">Resultado de la gestión *<select id="callResult" required><option value="contactado">Contactado</option><option value="confirmado">Confirmó asistencia</option><option value="no_contesta">No contesta</option><option value="numero_equivocado">Número equivocado</option><option value="cancelado">Canceló la cita</option><option value="reprogramar">Solicita reprogramación</option><option value="whatsapp">Mensaje enviado por WhatsApp</option></select></label>
+        <label>Próximo contacto<input id="nextCallDate" type="datetime-local"></label>
+        <label class="wide">Observaciones<textarea id="callNotes" rows="4" maxlength="800"></textarea></label>
+      </div>
+      <footer><button type="button" class="secondary" data-close-call>Cancelar</button><button class="primary" type="submit">Guardar gestión</button></footer>
+    </form>
+  </div>
+  <div id="attendanceModal" class="modal-layer hidden">
+    <form id="attendanceForm" class="modal small-modal">
+      <header><div><h2>Completar atención</h2><p id="attendancePatientName">Paciente</p></div><button type="button" data-close-attendance>×</button></header>
+      <input id="attendanceAppointmentId" type="hidden">
+      <div class="form-grid">
+        <label>Valor de consulta<input id="attendancePrice" readonly></label>
+        <label>Abono en agendamiento<input id="attendancePreviousPayment" readonly></label>
+        <label>Saldo por pagar<input id="attendancePending" readonly></label>
+        <label>Pago recibido en brigada *<input id="attendancePayment" type="number" min="0" step="1000" required></label>
+        <label>Método de pago<select id="attendanceMethod"><option value="efectivo">Efectivo</option><option value="transferencia">Transferencia</option><option value="nequi">Nequi</option><option value="daviplata">Daviplata</option><option value="tarjeta">Tarjeta</option></select></label>
+        <label class="wide">Observaciones<textarea id="attendanceNotes" rows="3" maxlength="800"></textarea></label>
+      </div>
+      <footer><button type="button" class="secondary" data-close-attendance>Cancelar</button><button class="primary" type="submit">Confirmar pago y cita cumplida</button></footer>
+    </form>
+  </div>
+  <div id="consultationModal" class="modal-layer hidden">
+    <form id="consultationForm" class="modal clinical-modal">
+      <header><div><h2>Consulta optométrica</h2><p id="consultationPatientName">Paciente</p></div><button type="button" data-close-consultation>×</button></header>
+      <input id="consultationAppointmentId" type="hidden">
+      <div class="form-grid">
+        <label>Optómetra *<input id="optometrist" required maxlength="140"></label>
+        <label>Próximo control<input id="nextControl" type="date"></label>
+        <label class="wide">Diagnóstico *<textarea id="diagnosis" rows="3" required maxlength="1200"></textarea></label>
+        <fieldset class="wide eye-formula"><legend>Fórmula ojo derecho (OD)</legend><label>Esfera<input id="odSphere" maxlength="12"></label><label>Cilindro<input id="odCylinder" maxlength="12"></label><label>Eje<input id="odAxis" type="number" min="0" max="180"></label><label>Adición<input id="odAddition" maxlength="12"></label></fieldset>
+        <fieldset class="wide eye-formula"><legend>Fórmula ojo izquierdo (OI)</legend><label>Esfera<input id="oiSphere" maxlength="12"></label><label>Cilindro<input id="oiCylinder" maxlength="12"></label><label>Eje<input id="oiAxis" type="number" min="0" max="180"></label><label>Adición<input id="oiAddition" maxlength="12"></label></fieldset>
+        <label>Distancia pupilar<input id="pupillaryDistance" maxlength="20" placeholder="Ej. 62 mm"></label>
+        <label>Tipo de lente recomendado<input id="recommendedLens" list="lensOptions" maxlength="140" placeholder="Selecciona un material"><datalist id="lensOptions"></datalist></label>
+        <label class="wide">Recomendaciones<textarea id="recommendations" rows="3" maxlength="1200"></textarea></label>
+        <label class="wide">Observaciones clínicas<textarea id="clinicalNotes" rows="3" maxlength="1200"></textarea></label>
+        <label class="wide">Orden médica o fotografía<input id="medicalDocument" type="file" accept="image/*,.pdf"></label>
+      </div>
+      <footer><button type="button" class="secondary" data-close-consultation>Cancelar</button><button class="primary" type="submit">Guardar consulta</button></footer>
+    </form>
+  </div>
+  <div id="catalogModal" class="modal-layer hidden"><form id="catalogForm" class="modal small-modal"><header><div><h2 id="catalogTitle">Nuevo catálogo</h2><p>Agrega una opción disponible para ventas.</p></div><button type="button" data-close-catalog>×</button></header><input id="catalogType" type="hidden"><div class="form-grid"><label class="wide">Nombre *<input id="catalogName" required maxlength="120"></label><label class="wide">Descripción<textarea id="catalogDescription" rows="3" maxlength="500"></textarea></label></div><footer><button type="button" class="secondary" data-close-catalog>Cancelar</button><button class="primary" type="submit">Guardar</button></footer></form></div>
+  <div id="tariffModal" class="modal-layer hidden"><form id="tariffForm" class="modal small-modal"><header><div><h2>Nueva tarifa</h2><p>Configura una combinación y su precio.</p></div><button type="button" data-close-tariff>×</button></header><div class="form-grid"><label>Material *<select id="tariffMaterial" required></select></label><label>Filtro *<select id="tariffFilter" required></select></label><label>Tratamiento *<select id="tariffTreatment" required></select></label><label>Precio COP *<input id="tariffPrice" type="number" min="0" step="1000" required></label><label>Vigente desde *<input id="tariffStart" type="date" required></label></div><footer><button type="button" class="secondary" data-close-tariff>Cancelar</button><button class="primary" type="submit">Guardar tarifa</button></footer></form></div>
+  <div id="saleModal" class="modal-layer hidden"><form id="saleForm" class="modal"><header><div><h2>Registrar venta</h2><p>El precio se obtiene de la tarifa configurada.</p></div><button type="button" data-close-sale>×</button></header><div class="form-grid"><label class="wide">Consulta del paciente *<select id="saleConsultation" required></select></label><label>Material *<select id="saleMaterial" required></select></label><label>Filtro *<select id="saleFilter" required></select></label><label>Tratamiento *<select id="saleTreatment" required></select></label><label>Cantidad<input id="saleQuantity" type="number" min="1" value="1" required></label><label>Precio configurado<input id="salePrice" readonly></label><label>Descuento autorizado<input id="saleDiscount" type="number" min="0" step="1000" value="0"></label><label>Abono<input id="salePayment" type="number" min="0" step="1000" value="0"></label><label>Método de pago<select id="saleMethod"><option value="efectivo">Efectivo</option><option value="transferencia">Transferencia</option><option value="nequi">Nequi</option><option value="daviplata">Daviplata</option><option value="tarjeta">Tarjeta</option></select></label><label>Fecha de entrega<input id="saleDelivery" type="date"></label><label class="wide">Total y saldo<input id="saleSummary" readonly></label><label class="wide">Observaciones<textarea id="saleNotes" rows="3"></textarea></label></div><footer><button type="button" class="secondary" data-close-sale>Cancelar</button><button class="primary" type="submit">Guardar venta</button></footer></form></div>
+  <div id="userModal" class="modal-layer hidden"><form id="userForm" class="modal small-modal"><header><div><h2>Nuevo usuario</h2><p>Crea su acceso y asígnale un rol desde el primer momento.</p></div><button type="button" data-close-user>×</button></header><div class="form-grid"><label class="wide">Nombre completo *<input id="newUserName" required maxlength="140"></label><label class="wide">Correo electrónico *<input id="newUserEmail" type="email" required maxlength="180"></label><label class="wide">Contraseña temporal *<div class="generated-password"><input id="newUserPassword" type="text" required minlength="8"><button type="button" id="generateUserPassword" class="secondary">Generar</button></div><small>El usuario podrá cambiarla después desde “Olvidé mi contraseña”.</small></label><label>Rol *<select id="newUserRole" required></select></label><label>Estado<select id="newUserState"><option value="activo">Activo</option><option value="inactivo">Inactivo</option><option value="suspendido">Suspendido</option></select></label><label>Celular<input id="newUserPhone" type="tel" maxlength="20"></label><label>Identificación<input id="newUserDocument" maxlength="30"></label><div class="wide notice">Si Supabase exige confirmar correos, la persona deberá abrir el mensaje de confirmación antes de ingresar.</div></div><footer><button type="button" class="secondary" data-close-user>Cancelar</button><button class="primary" type="submit" id="saveNewUser">Crear usuario</button></footer></form></div>
+  <button id="helpLauncher" class="help-launcher hidden" aria-label="Abrir asistente de ayuda">?</button>
+  <section id="helpAssistant" class="help-assistant hidden" aria-label="Asistente de ayuda"><header><div><span>?</span><div><strong>Asistente de ayuda</strong><small>Centro Óptico · Respuestas automáticas</small></div></div><button id="closeHelp" aria-label="Cerrar asistente">×</button></header><div id="helpMessages" class="help-messages"></div><div id="helpQuick" class="help-quick"></div><form id="helpForm"><input id="helpInput" autocomplete="off" maxlength="240" placeholder="Escribe tu pregunta…" aria-label="Pregunta para el asistente"><button type="submit">Enviar</button></form></section>
+  <div id="toast" class="toast"></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
