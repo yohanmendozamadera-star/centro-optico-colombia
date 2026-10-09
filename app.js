@@ -614,5 +614,5 @@ const localDateValue=date=>`${date.getFullYear()}-${String(date.getMonth()+1).pa
 const cop=value=>new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0}).format(Number(value||0));
 const capitalize=value=>String(value||"").charAt(0).toUpperCase()+String(value||"").slice(1);
 supabase.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_OUT")showAuth();if(event==="PASSWORD_RECOVERY")toast("Ya puedes establecer una contraseña nueva desde Supabase.");});
-if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("./service-worker.js").catch(()=>{}));}
+if("serviceWorker" in navigator){window.addEventListener("load",async()=>{try{const registration=await navigator.serviceWorker.register("./service-worker.js?v=6");await registration.update();}catch{}});}
 boot();
