@@ -25,6 +25,7 @@ let consultations = [];
 let consultationAppointments = [];
 let productCatalogs={materials:[],filters:[],treatments:[],tariffs:[]};
 let saleConsultations=[];
+let patientSearchTimer=null;
 
 const clean = value => String(value || "").trim();
 const toast = message => {
@@ -38,6 +39,21 @@ const errorText = error => {
   if (text.includes("schema cache")) return "La base de datos aún no está preparada. Ejecuta el archivo schema.sql en Supabase.";
   return text;
 };
+const todayValue = () => localDateValue(new Date());
+const dateFilterKey = scope => `centroOptico.${scope}.dateRange`;
+const getDateFilter = scope => {
+  const fallback={from:todayValue(),to:todayValue()};
+  try {
+    const saved=JSON.parse(localStorage.getItem(dateFilterKey(scope))||"null");
+    return /^\d{4}-\d{2}-\d{2}$/.test(saved?.from)&&/^\d{4}-\d{2}-\d{2}$/.test(saved?.to)?saved:fallback;
+  } catch { return fallback; }
+};
+const saveDateFilter = (scope,from,to) => {
+  if(!from||!to||from>to){toast("La fecha inicial no puede ser posterior a la fecha final.");return false;}
+  localStorage.setItem(dateFilterKey(scope),JSON.stringify({from,to}));return true;
+};
+const nextDateValue = value => {const date=new Date(`${value}T12:00:00Z`);date.setUTCDate(date.getUTCDate()+1);return date.toISOString().slice(0,10);};
+const withTimeout = (request,ms=20000) => Promise.race([request,new Promise((_,reject)=>setTimeout(()=>reject(new Error("La conexión tardó demasiado. Revisa la lista antes de intentarlo nuevamente.")),ms))]);
 
 async function boot() {
   const { data } = await supabase.auth.getSession();
@@ -127,30 +143,46 @@ async function renderDashboard() {
   const channels=sumBy(active,"canal","valor");paintMetricBars("#dashboardChannelBars",channels,Math.max(...Object.values(channels),0));
 }
 async function renderPatients() {
+  const dateRange=getDateFilter("patients");
   $("#pageName").textContent = "Pacientes";
-  $("#content").innerHTML = `<div class="page-hero"><div><h1>Pacientes</h1><p>Registro único, búsqueda y control de duplicados.</p></div><button class="primary" id="newPatient">＋ Nuevo paciente</button></div>
-    <article class="card"><div class="card-head"><div><h2>Directorio de pacientes</h2><p>Busca por identificación, nombre o celular</p></div></div>
-    <div class="tools"><input class="search" id="patientSearch" placeholder="Buscar paciente…"><button class="secondary" id="refreshPatients">Actualizar</button></div>
-    <div class="table-wrap"><table><thead><tr><th>Paciente</th><th>Identificación</th><th>Celular</th><th>Ubicación del registro</th><th>Registro</th><th>Estado</th><th>Acciones</th></tr></thead><tbody id="patientRows"><tr><td colspan="7" class="empty">Cargando pacientes…</td></tr></tbody></table></div></article>`;
-  $("#newPatient").onclick = () => openPatient();
-  $("#refreshPatients").onclick = loadPatients;
-  $("#patientSearch").oninput = filterPatientRows;
-  await loadPatients();
+  $("#content").innerHTML = `<div class="page-hero"><div><h1>Consultar paciente</h1><p>La información permanece oculta hasta realizar una búsqueda.</p></div>${hasPermission("pacientes.crear")?'<button class="primary" id="newPatient">＋ Nuevo paciente</button>':""}</div>
+    <article class="card"><div class="card-head"><div><h2>Consulta privada</h2><p>Selecciona un criterio y escribe el dato que deseas consultar</p></div></div>
+    <form class="patient-query" id="patientQueryForm"><label>Fecha inicio<input type="date" id="patientDateFrom" value="${dateRange.from}" required></label><label>Fecha fin<input type="date" id="patientDateTo" value="${dateRange.to}" required></label><label>Consultar por<select id="patientSearchType"><option value="identificacion">Identificación</option><option value="celular">Celular</option><option value="nombre">Nombre y apellido</option></select></label><label class="query-value">Dato a consultar<input id="patientSearch" autocomplete="off" placeholder="Escribe la identificación completa…" required></label><button class="primary" type="submit">Consultar</button><button class="secondary" id="clearPatientSearch" type="button">Limpiar</button></form>
+    <div class="privacy-note">🔒 No se muestra ningún directorio general. Los resultados aparecen únicamente después de consultar.</div>
+    <div class="table-wrap"><table><thead><tr><th>Paciente</th><th>Identificación</th><th>Celular</th><th>Registro</th><th>Acciones</th></tr></thead><tbody id="patientRows"><tr><td colspan="5" class="empty"><b>Realiza una consulta</b>Busca por identificación, celular o nombre y apellido.</td></tr></tbody></table></div></article>
+    <section id="patientHistory" class="hidden"></section>`;
+  if($("#newPatient"))$("#newPatient").onclick = () => openPatient();
+  $("#patientQueryForm").onsubmit=async event=>{event.preventDefault();await loadPatients();};
+  ["#patientDateFrom","#patientDateTo"].forEach(selector=>$(selector).onchange=async()=>{const from=$("#patientDateFrom").value,to=$("#patientDateTo").value;if(saveDateFilter("patients",from,to)&&clean($("#patientSearch").value))await loadPatients();});
+  $("#patientSearchType").onchange=()=>{const type=$("#patientSearchType").value;$("#patientSearch").value="";$("#patientSearch").placeholder=type==="identificacion"?"Escribe la identificación completa…":type==="celular"?"Escribe el celular…":"Escribe nombre y apellido…";clearPatientResults();};
+  $("#clearPatientSearch").onclick=()=>{$("#patientSearch").value="";clearPatientResults();};
 }
 async function loadPatients() {
-  const { data, error } = await supabase.from("pacientes").select("*").eq("activo",true).order("created_at",{ascending:false}).limit(500);
-  if (error) { $("#patientRows").innerHTML = `<tr><td colspan="7" class="empty"><b>No fue posible cargar pacientes</b>${escapeHTML(errorText(error))}</td></tr>`; return; }
+  const type=$("#patientSearchType")?.value||"identificacion",value=clean($("#patientSearch")?.value),from=$("#patientDateFrom")?.value,to=$("#patientDateTo")?.value;
+  if(!saveDateFilter("patients",from,to))return;
+  if(value.length<(type==="nombre"?3:4))return toast(type==="nombre"?"Escribe al menos 3 letras.":"Escribe al menos 4 números.");
+  $("#patientRows").innerHTML=`<tr><td colspan="5" class="empty">Consultando…</td></tr>`;
+  const { data, error } = await supabase.rpc("buscar_pacientes_rango",{p_tipo:type,p_valor:value,p_desde:from,p_hasta:to});
+  if (error) { $("#patientRows").innerHTML = `<tr><td colspan="5" class="empty"><b>No fue posible realizar la consulta</b>${escapeHTML(errorText(error))}</td></tr>`; return; }
   patients = data || []; paintPatients(patients);
 }
-function filterPatientRows() {
-  const q=clean($("#patientSearch")?.value).toLowerCase();
-  paintPatients(patients.filter(p => !q || [p.nombre_completo,p.numero_identificacion,p.celular_principal,p.celular_alternativo,p.ubicacion_registro].some(v=>String(v||"").toLowerCase().includes(q))));
-}
+function clearPatientResults(){patients=[];$("#patientRows").innerHTML=`<tr><td colspan="5" class="empty"><b>Realiza una consulta</b>Busca por identificación, celular o nombre y apellido.</td></tr>`;$("#patientHistory").classList.add("hidden");$("#patientHistory").innerHTML="";}
+function filterPatientRows(){loadPatients();}
 function paintPatients(list) {
-  if (!list.length) return $("#patientRows").innerHTML=`<tr><td colspan="7" class="empty"><b>No encontramos pacientes</b>Prueba otra búsqueda o registra el primero.</td></tr>`;
-  $("#patientRows").innerHTML=list.map(p=>`<tr><td><strong>${escapeHTML(p.nombre_completo)}</strong><small>${escapeHTML(p.correo||"Sin correo")}</small></td><td>${escapeHTML(p.tipo_identificacion)} ${escapeHTML(p.numero_identificacion)}</td><td>${escapeHTML(p.celular_principal)}</td><td>${escapeHTML(p.ubicacion_registro||"No registrada")}</td><td>${formatDate(p.created_at)}</td><td><span class="badge">Activo</span></td><td><button class="secondary edit-patient" data-id="${p.id}">Editar</button></td></tr>`).join("");
+  if (!list.length) return $("#patientRows").innerHTML=`<tr><td colspan="5" class="empty"><b>No encontramos coincidencias</b>Revisa el dato o registra un paciente nuevo.</td></tr>`;
+  $("#patientRows").innerHTML=list.map(p=>`<tr><td><strong>${escapeHTML(p.nombre_completo)}</strong>${p.identificacion_provisional?'<small class="warning-text">Identificación provisional pendiente de corregir</small>':`<small>${escapeHTML(p.correo||"Sin correo")}</small>`}</td><td>${escapeHTML(p.tipo_identificacion)} ${escapeHTML(p.numero_identificacion)}</td><td>${escapeHTML(p.celular_principal||"Sin celular")}</td><td>${formatDate(p.created_at)}</td><td><div class="inline-actions"><button class="primary history-patient" data-id="${p.id}">Ver historial</button>${hasPermission("pacientes.editar")?`<button class="secondary edit-patient" data-id="${p.id}">Editar</button>`:""}</div></td></tr>`).join("");
   $$(".edit-patient").forEach(btn=>btn.onclick=()=>openPatient(patients.find(p=>p.id===btn.dataset.id)));
+  $$(".history-patient").forEach(btn=>btn.onclick=()=>loadPatientHistory(patients.find(p=>p.id===btn.dataset.id)));
 }
+async function loadPatientHistory(patient){
+  const panel=$("#patientHistory");panel.classList.remove("hidden");panel.innerHTML=`<article class="card"><div class="empty">Cargando historial de ${escapeHTML(patient.nombre_completo)}…</div></article>`;
+  const [a,c,v,b]=await Promise.all([supabase.from("agendamientos").select("id,numero_volante,valor_consulta,abono,saldo_pendiente,estado,created_at,jornadas(nombre,fecha_brigada,lugar)").eq("paciente_id",patient.id).order("created_at",{ascending:false}),supabase.from("consultas_optometricas").select("id,optometra,diagnostico,tipo_lente_recomendado,proximo_control,created_at").eq("paciente_id",patient.id).order("created_at",{ascending:false}),supabase.from("ventas").select("id,numero_venta,total,abono,saldo,estado,fecha_entrega,created_at").eq("paciente_id",patient.id).order("created_at",{ascending:false}),supabase.from("bitacora").select("id,accion,informacion_anterior,informacion_nueva,created_at,perfiles(nombre_completo)").eq("tabla","pacientes").eq("registro_id",patient.id).order("created_at",{ascending:false})]);
+  const visible=result=>result.error?[]:(result.data||[]),appointments=visible(a),consults=visible(c),sales=visible(v),audit=visible(b);
+  panel.innerHTML=`<article class="card patient-history-card"><div class="card-head"><div><h2>${escapeHTML(patient.nombre_completo)}</h2><p>${escapeHTML(patient.tipo_identificacion)} ${escapeHTML(patient.numero_identificacion)} · ${escapeHTML(patient.celular_principal||"Sin celular")}</p></div><button class="secondary" id="closePatientHistory">Cerrar historial</button></div><div class="history-summary"><span><b>${appointments.length}</b>Citas</span><span><b>${consults.length}</b>Consultas</span><span><b>${sales.length}</b>Ventas</span><span><b>${audit.length}</b>Cambios auditados</span></div>${historyGroup("Historial de citas",appointments.map(x=>`<div><strong>${escapeHTML(x.jornadas?.nombre||"Jornada")}</strong><span>${x.jornadas?.fecha_brigada?shortDate(x.jornadas.fecha_brigada):formatDate(x.created_at)} · ${appointmentState(x.estado)} · Abono ${cop(x.abono)}</span></div>`))}${historyGroup("Consultas optométricas",consults.map(x=>`<div><strong>${formatDate(x.created_at)} · ${escapeHTML(x.optometra)}</strong><span>${escapeHTML(x.diagnostico||"Sin diagnóstico")} · ${escapeHTML(x.tipo_lente_recomendado||"Sin lente recomendado")}</span></div>`))}${historyGroup("Ventas",sales.map(x=>`<div><strong>${escapeHTML(x.numero_venta)} · ${cop(x.total)}</strong><span>${capitalize(x.estado)} · Abono ${cop(x.abono)} · Saldo ${cop(x.saldo)}</span></div>`))}${hasPermission("bitacora.ver")?historyGroup("Auditoría de datos",audit.map(x=>`<div><strong>${formatDate(x.created_at)} · ${escapeHTML(x.perfiles?.nombre_completo||"Usuario")}</strong><span>${patientAuditSummary(x)}</span></div>`)):""}</article>`;
+  $("#closePatientHistory").onclick=()=>{panel.classList.add("hidden");panel.innerHTML="";};panel.scrollIntoView({behavior:"smooth",block:"start"});
+}
+function historyGroup(title,items){return `<section class="history-group"><h3>${title}</h3>${items.length?items.join(""):'<p class="history-empty">Sin registros.</p>'}</section>`;}
+function patientAuditSummary(entry){if(entry.accion==="insert")return "Paciente creado";const before=entry.informacion_anterior||{},after=entry.informacion_nueva||{};const labels={numero_identificacion:"identificación",nombre_completo:"nombre",celular_principal:"celular principal",celular_alternativo:"celular alternativo",correo:"correo",fecha_nacimiento:"fecha de nacimiento",genero:"género"};const changes=Object.keys(labels).filter(k=>String(before[k]??"")!==String(after[k]??"")).map(k=>`${labels[k]}: “${before[k]??"vacío"}” → “${after[k]??"vacío"}”`);return changes.length?escapeHTML(changes.join(" · ")):"Registro actualizado";}
 function openPatient(patient=null) {
   $("#patientForm").reset(); $("#patientId").value=patient?.id||""; $("#patientModalTitle").textContent=patient?"Editar paciente":"Nuevo paciente"; $("#duplicateAlert").classList.add("hidden");
   capturedPatientLocation=patient?{ubicacion_registro:patient.ubicacion_registro,latitud_registro:patient.latitud_registro,longitud_registro:patient.longitud_registro,precision_ubicacion_metros:patient.precision_ubicacion_metros}:null;
@@ -176,7 +208,8 @@ $$("[data-close]").forEach(btn=>btn.onclick=()=>{ $("#patientModal").classList.a
 $("#patientForm").onsubmit=async event=>{
   event.preventDefault(); const id=$("#patientId").value;
   const record={tipo_identificacion:$("#documentType").value,numero_identificacion:clean($("#documentNumber").value),nombre_completo:clean($("#fullName").value),celular_principal:clean($("#phone").value),celular_alternativo:clean($("#alternatePhone").value)||null,genero:$("#gender").value||null,fecha_nacimiento:$("#birthDate").value||null,observaciones:clean($("#notes").value)||null,...(capturedPatientLocation||{})};
-  const duplicate=patients.find(p=>p.id!==id&&(p.numero_identificacion===record.numero_identificacion||p.celular_principal===record.celular_principal||(record.celular_alternativo&&[p.celular_principal,p.celular_alternativo].includes(record.celular_alternativo))));
+  const {data:duplicates,error:duplicateError}=await supabase.rpc("buscar_duplicado_paciente",{p_paciente_id:id||null,p_identificacion:record.numero_identificacion,p_celular:record.celular_principal});
+  if(duplicateError)return toast(errorText(duplicateError));const duplicate=duplicates?.[0];
   if(duplicate){const alert=$("#duplicateAlert");alert.textContent=`Posible duplicado: ${duplicate.nombre_completo}, ${duplicate.numero_identificacion}, ${duplicate.celular_principal}. Revisa antes de continuar.`;alert.classList.remove("hidden");return;}
   let savedPatient=null,error=null;
   if(id){const result=await supabase.from("pacientes").update(record).eq("id",id).select().single();savedPatient=result.data;error=result.error;}
@@ -184,7 +217,7 @@ $("#patientForm").onsubmit=async event=>{
   if(error)return toast(errorText(error));
   $("#patientModal").classList.add("hidden");toast(id?"Paciente actualizado.":"Paciente registrado.");
   if(patientCreatedFromAppointment&&savedPatient){patientCreatedFromAppointment=false;patients.push(savedPatient);selectAppointmentPatient(savedPatient);$("#appointmentModal").classList.remove("hidden");}
-  if($("#patientRows"))await loadPatients();
+  if($("#patientRows")&&clean($("#patientSearch")?.value))await loadPatients();
 };
 
 async function renderJourneys() {
@@ -329,18 +362,23 @@ $("#attendanceForm").onsubmit=async event=>{
 };
 
 async function renderAppointments(){
+  const dateRange=getDateFilter("appointments");
   $("#pageName").textContent="Agenda";
   $("#content").innerHTML=`<div class="page-hero"><div><h1>Agenda</h1><p>Agendamientos, confirmación y seguimiento de pacientes.</p></div><button class="primary" id="newAppointment">＋ Agendar paciente</button></div>
     <div class="stats"><article class="stat"><span>Citas registradas</span><strong id="registeredAppointments">—</strong></article><article class="stat"><span>Confirmadas</span><strong id="confirmedAppointments">—</strong></article><article class="stat"><span>Saldo pendiente</span><strong id="pendingBalance">—</strong></article><article class="stat"><span>Abonos recibidos</span><strong id="receivedPayments">—</strong></article></div>
     <article class="card"><div class="card-head"><div><h2>Agendamientos</h2><p>Busca por paciente, identificación, celular o volante</p></div></div>
-    <div class="tools"><input class="search" id="appointmentSearch" placeholder="Buscar en la agenda…"><select id="appointmentStatusFilter"><option value="">Todos los estados</option><option value="registrada">Registradas</option><option value="confirmada">Confirmadas</option><option value="reprogramada">Reprogramadas</option><option value="cancelada">Canceladas</option></select><select id="appointmentJourneyFilter"><option value="">Todas las jornadas</option></select><button class="secondary" id="refreshAppointments">Actualizar</button></div>
+    <div class="tools"><label class="date-filter">Registradas desde<input type="date" id="appointmentDateFrom" value="${dateRange.from}"></label><label class="date-filter">Registradas hasta<input type="date" id="appointmentDateTo" value="${dateRange.to}"></label><input class="search" id="appointmentSearch" placeholder="Buscar en la agenda…"><select id="appointmentStatusFilter"><option value="">Todos los estados</option><option value="registrada">Registradas</option><option value="confirmada">Confirmadas</option><option value="reprogramada">Reprogramadas</option><option value="cancelada">Canceladas</option></select><select id="appointmentJourneyFilter"><option value="">Todas las jornadas</option></select><button class="secondary" id="refreshAppointments">Actualizar</button></div>
     <div class="table-wrap"><table><thead><tr><th>Paciente</th><th>Jornada</th><th>Volante</th><th>Valor</th><th>Abono</th><th>Saldo</th><th>Estado</th><th>Contacto</th><th>Acciones</th></tr></thead><tbody id="appointmentRows"><tr><td colspan="9" class="empty">Cargando agenda…</td></tr></tbody></table></div></article>`;
   $("#newAppointment").onclick=()=>openAppointment();
   $("#refreshAppointments").onclick=loadAppointments;$("#appointmentSearch").oninput=filterAppointmentRows;$("#appointmentStatusFilter").onchange=filterAppointmentRows;$("#appointmentJourneyFilter").onchange=filterAppointmentRows;
+  ["#appointmentDateFrom","#appointmentDateTo"].forEach(selector=>$(selector).onchange=loadAppointments);
   await loadAppointments();
 }
 async function loadAppointments(){
-  const {data,error}=await supabase.from("agendamientos").select("*, pacientes(id,nombre_completo,numero_identificacion,celular_principal), jornadas(id,nombre,fecha_brigada,municipio), brigadas(id,nombre)").eq("activo",true).order("created_at",{ascending:false}).limit(500);
+  const from=$("#appointmentDateFrom")?.value,to=$("#appointmentDateTo")?.value;
+  if(!saveDateFilter("appointments",from,to))return;
+  $("#appointmentRows").innerHTML=`<tr><td colspan="9" class="empty">Cargando agenda…</td></tr>`;
+  const {data,error}=await supabase.from("agendamientos").select("*, pacientes(id,nombre_completo,numero_identificacion,celular_principal), jornadas(id,nombre,fecha_brigada,municipio), brigadas(id,nombre)").eq("activo",true).gte("created_at",`${from}T00:00:00-05:00`).lt("created_at",`${nextDateValue(to)}T00:00:00-05:00`).order("created_at",{ascending:false}).limit(1000);
   if(error){$("#appointmentRows").innerHTML=`<tr><td colspan="9" class="empty"><b>No fue posible cargar la agenda</b>${escapeHTML(errorText(error))}</td></tr>`;return;}
   appointments=data||[];updateAppointmentStats();fillAppointmentJourneyFilter();paintAppointments(appointments);
 }
@@ -359,8 +397,8 @@ function paintAppointments(list){
 }
 async function loadAppointmentCatalogs(includeInactive=false){
   const journeyQuery=supabase.from("jornadas").select("id,nombre,fecha_brigada,municipio,valor_consulta,estado").eq("activo",true).eq("eliminado",false);
-  const [p,j,b]=await Promise.all([supabase.from("pacientes").select("id,nombre_completo,numero_identificacion,celular_principal").eq("activo",true).eq("eliminado",false).order("nombre_completo"),includeInactive?journeyQuery.in("estado",["abierta","inactiva"]).order("fecha_brigada"):journeyQuery.eq("estado","abierta").order("fecha_brigada"),supabase.from("brigadas").select("id,jornada_id,nombre,fecha").eq("activo",true).eq("eliminado",false).in("estado",["programada","en_ejecucion"]).order("fecha")]);
-  if(p.error||j.error||b.error)throw(p.error||j.error||b.error);patients=p.data||[];journeys=j.data||[];brigades=b.data||[];
+  const [j,b]=await Promise.all([includeInactive?journeyQuery.in("estado",["abierta","inactiva"]).order("fecha_brigada"):journeyQuery.eq("estado","abierta").order("fecha_brigada"),supabase.from("brigadas").select("id,jornada_id,nombre,fecha").eq("activo",true).eq("eliminado",false).in("estado",["programada","en_ejecucion"]).order("fecha")]);
+  if(j.error||b.error)throw(j.error||b.error);patients=[];journeys=j.data||[];brigades=b.data||[];
 }
 async function openAppointment(appointment=null,forcedJourneyId=null,forcedBrigadeId=null,fromBrigadeModule=false){
   appointmentFromBrigadeModule=fromBrigadeModule;
@@ -370,7 +408,7 @@ async function openAppointment(appointment=null,forcedJourneyId=null,forcedBriga
   const requiresJourneyChoice=!appointment&&!forcedJourneyId&&journeys.length>1;
   $("#appointmentJourney").innerHTML=`${requiresJourneyChoice?'<option value="">Selecciona la jornada correcta…</option>':""}${journeys.map(j=>`<option value="${j.id}">${escapeHTML(j.nombre)} · ${escapeHTML(j.municipio)} · ${shortDate(j.fecha_brigada)}</option>`).join("")}`;
   $("#appointmentPatient").value="";$("#appointmentPatientSearch").value="";$("#selectedPatient").textContent="Ningún paciente seleccionado";$("#patientSearchResults").classList.add("hidden");$("#patientNotFound").classList.add("hidden");
-  const selected=patients.find(p=>p.id===appointment?.paciente_id);if(selected)selectAppointmentPatient(selected);
+  if(appointment?.paciente_id){const {data:selected}=await supabase.from("pacientes").select("id,nombre_completo,numero_identificacion,celular_principal").eq("id",appointment.paciente_id).maybeSingle();if(selected){patients=[selected];selectAppointmentPatient(selected);}}
   $("#appointmentJourney").value=forcedJourneyId||appointment?.jornada_id||(journeys.length===1?journeys[0].id:"");appointmentContextBrigade=forcedBrigadeId||appointment?.brigada_id||null;
   $("#appointmentFlyer").value=appointment?.numero_volante||"";$("#appointmentPayment").value=appointment?.abono||0;$("#appointmentNotes").value=appointment?.observaciones||"";recalculateAppointment();
   $("#appointmentJourney").onchange=()=>{if(appointmentContextBrigade){const context=brigades.find(b=>b.id===appointmentContextBrigade);if(context?.jornada_id!==$("#appointmentJourney").value)appointmentContextBrigade=null;}recalculateAppointment();};$("#appointmentPayment").oninput=recalculateAppointment;
@@ -378,14 +416,15 @@ async function openAppointment(appointment=null,forcedJourneyId=null,forcedBriga
   $("#createPatientFromAppointment").onclick=()=>{const query=clean($("#appointmentPatientSearch").value);patientCreatedFromAppointment=true;$("#appointmentModal").classList.add("hidden");openPatient();if(/^\d+$/.test(query))$("#documentNumber").value=query;else $("#fullName").value=query;};
   $("#appointmentModal").classList.remove("hidden");
 }
-function searchAppointmentPatients(){
+async function searchAppointmentPatients(){
   const q=clean($("#appointmentPatientSearch").value).toLowerCase(),results=$("#patientSearchResults"),notFound=$("#patientNotFound");
   $("#appointmentPatient").value="";$("#selectedPatient").textContent="Ningún paciente seleccionado";
-  if(q.length<2){results.classList.add("hidden");notFound.classList.add("hidden");return;}
-  const matches=patients.filter(p=>[p.nombre_completo,p.numero_identificacion,p.celular_principal].some(v=>String(v||"").toLowerCase().includes(q))).slice(0,8);
+  if(q.length<3){results.classList.add("hidden");notFound.classList.add("hidden");return;}
+  clearTimeout(patientSearchTimer);patientSearchTimer=setTimeout(async()=>{const numeric=/^\d+$/.test(q),responses=await Promise.all((numeric?["identificacion","celular"]:["nombre"]).map(type=>supabase.rpc("buscar_pacientes",{p_tipo:type,p_valor:q})));const error=responses.find(x=>x.error)?.error;if(error)return toast(errorText(error));const matches=[...new Map(responses.flatMap(x=>x.data||[]).map(p=>[p.id,p])).values()].slice(0,8);patients=matches;
   if(!matches.length){results.classList.add("hidden");notFound.classList.remove("hidden");return;}
   notFound.classList.add("hidden");results.innerHTML=matches.map(p=>`<button type="button" class="search-result" data-id="${p.id}"><strong>${escapeHTML(p.nombre_completo)}</strong><small>${escapeHTML(p.numero_identificacion)} · ${escapeHTML(p.celular_principal)}</small></button>`).join("");results.classList.remove("hidden");
   $$(".search-result").forEach(b=>b.onclick=()=>selectAppointmentPatient(patients.find(p=>p.id===b.dataset.id)));
+  },300);
 }
 function selectAppointmentPatient(patient){$("#appointmentPatient").value=patient.id;$("#appointmentPatientSearch").value=patient.nombre_completo;$("#selectedPatient").textContent=`Seleccionado: ${patient.nombre_completo} · ${patient.numero_identificacion} · ${patient.celular_principal}`;$("#patientSearchResults").classList.add("hidden");$("#patientNotFound").classList.add("hidden");}
 function recalculateAppointment(){const journey=journeys.find(j=>j.id===$("#appointmentJourney").value),price=Number(journey?.valor_consulta||0),payment=Number($("#appointmentPayment").value||0);$("#appointmentPrice").value=cop(price);$("#appointmentBalance").value=cop(Math.max(price-payment,0));}
@@ -525,7 +564,23 @@ function openNewRole(){const name=prompt("Nombre del nuevo rol:","");if(name===n
 function randomPassword(){const chars="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$";return Array.from({length:12},()=>chars[Math.floor(Math.random()*chars.length)]).join("");}
 function openNewUser(){$("#userForm").reset();$("#newUserRole").innerHTML=adminRoles.filter(r=>r.activo&&r.nombre!=="Superadministrador").map(r=>`<option value="${r.id}">${escapeHTML(r.nombre)}</option>`).join("");$("#newUserPassword").value=randomPassword();$("#userModal").classList.remove("hidden");}
 $$('[data-close-user]').forEach(b=>b.onclick=()=>$("#userModal").classList.add("hidden"));$("#generateUserPassword").onclick=()=>$("#newUserPassword").value=randomPassword();
-$("#userForm").onsubmit=async event=>{event.preventDefault();const button=$("#saveNewUser"),email=clean($("#newUserEmail").value).toLowerCase(),password=$("#newUserPassword").value,name=clean($("#newUserName").value);button.disabled=true;button.textContent="Creando…";const signupClient=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}});const {data,error}=await signupClient.auth.signUp({email,password,options:{data:{nombre_completo:name},emailRedirectTo:location.origin+location.pathname}});if(error||!data.user||data.user.identities?.length===0){button.disabled=false;button.textContent="Crear usuario";return toast(errorText(error||new Error("Ese correo ya está registrado o no pudo crearse.")));}const role=$("#newUserRole").value,state=$("#newUserState").value;await new Promise(resolve=>setTimeout(resolve,350));const profileUpdate=await supabase.from("perfiles").update({nombre_completo:name,celular:clean($("#newUserPhone").value)||null,identificacion:clean($("#newUserDocument").value)||null}).eq("id",data.user.id);if(profileUpdate.error){button.disabled=false;button.textContent="Crear usuario";return toast(errorText(profileUpdate.error));}const access=await supabase.rpc("actualizar_usuario_administracion",{p_usuario:data.user.id,p_rol:role,p_estado:state});button.disabled=false;button.textContent="Crear usuario";if(access.error)return toast(errorText(access.error));$("#userModal").classList.add("hidden");toast(data.session?"Usuario creado y listo para ingresar.":"Usuario creado. Debe confirmar el correo antes de ingresar.");await loadAccessAdmin();};
+$("#userForm").onsubmit=async event=>{
+  event.preventDefault();
+  const button=$("#saveNewUser"),email=clean($("#newUserEmail").value).toLowerCase(),password=$("#newUserPassword").value,name=clean($("#newUserName").value),phone=clean($("#newUserPhone").value)||null,role=$("#newUserRole").value,state=$("#newUserState").value;
+  button.disabled=true;button.textContent="Creando…";
+  try{
+    const signupClient=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}});
+    const {data,error}=await withTimeout(signupClient.auth.signUp({email,password,options:{data:{nombre_completo:name},emailRedirectTo:location.origin+location.pathname}}));
+    if(error||!data.user||data.user.identities?.length===0)throw(error||new Error("Ese correo ya está registrado o no pudo crearse."));
+    await new Promise(resolve=>setTimeout(resolve,350));
+    const profileUpdate=await withTimeout(supabase.from("perfiles").update({nombre_completo:name,celular:phone}).eq("id",data.user.id));
+    if(profileUpdate.error)throw profileUpdate.error;
+    const access=await withTimeout(supabase.rpc("actualizar_usuario_administracion",{p_usuario:data.user.id,p_rol:role,p_estado:state}));
+    if(access.error)throw access.error;
+    $("#userModal").classList.add("hidden");toast(data.session?"Usuario creado y listo para ingresar.":"Usuario creado. Debe confirmar el correo antes de ingresar.");await loadAccessAdmin();
+  }catch(error){toast(errorText(error));await loadAccessAdmin();}
+  finally{button.disabled=false;button.textContent="Crear usuario";}
+};
 function openUserAccess(user){const options=adminRoles.filter(r=>r.activo).map((r,i)=>`${i+1}. ${r.nombre}`).join("\n"),current=Math.max(adminRoles.findIndex(r=>r.id===user.rol_id),0)+1,choice=prompt(`Selecciona el rol para ${user.nombre_completo}:\n${options}`,String(current));if(choice===null)return;const role=adminRoles[Number(choice)-1];if(!role)return toast("Selecciona un número válido.");const state=prompt("Estado: activo, inactivo o suspendido",user.estado);if(state===null||!["activo","inactivo","suspendido"].includes(clean(state).toLowerCase()))return toast("Estado no válido.");supabase.rpc("actualizar_usuario_administracion",{p_usuario:user.id,p_rol:role.id,p_estado:clean(state).toLowerCase()}).then(async({error})=>{if(error)return toast(errorText(error));toast("Acceso del usuario actualizado.");await loadAccessAdmin();});}
 const moduleName=value=>({pacientes:"Pacientes",usuarios:"Usuarios",permisos:"Permisos",bitacora:"Bitácora",jornadas:"Jornadas",brigadas:"Brigadas",agenda:"Agenda",pagos:"Pagos básicos",call_center:"Call Center",asistencia:"Asistencia en brigada",brigada:"Cobros en brigada",consultas:"Consultas",documentos_clinicos:"Documentos clínicos",productos:"Tarifas y productos",ventas:"Ventas",recaudos:"Recaudos",reportes:"Reportes"}[value]||capitalize(value));const actionName=value=>({ver:"Ver módulo",crear:"Crear",editar:"Editar",eliminar:"Eliminar",administrar:"Administrar",registrar:"Registrar",gestionar:"Gestionar",confirmar:"Confirmar",cerrar:"Cerrar",cobrar:"Cobrar",cargar:"Cargar archivos",descuento:"Aplicar descuentos",anular:"Anular",incumplir:"Marcar incumplida"}[value]||capitalize(value));
 

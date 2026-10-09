@@ -1,4 +1,4 @@
-const CACHE_NAME="centro-optico-v1";
+const CACHE_NAME="centro-optico-v5";
 const APP_SHELL=["./","./index.html","./styles.css","./app.js","./config.js","./logo.png","./icon-192.png","./icon-512.png","./manifest.webmanifest"];
 
 self.addEventListener("install",event=>{
