@@ -71,6 +71,11 @@ async function enterApp(user) {
     currentProfile = { id:user.id, nombre_completo:user.email.split("@")[0], correo:user.email, roles:{nombre:"Sin configurar"} };
     toast(errorText(error));
   } else currentProfile = data;
+  if(currentProfile?.estado&&currentProfile.estado!=="activo"){
+    await supabase.auth.signOut();
+    currentProfile=null;currentPermissions=new Set();
+    return showAuth("Tu usuario está inactivo o suspendido. Comunícate con el administrador.");
+  }
   await loadCurrentPermissions();
   const name = currentProfile?.nombre_completo || user.email;
   $("#userName").textContent = name;
@@ -556,7 +561,7 @@ async function renderUsers(){
   if(!hasPermission("permisos.administrar"))$("#newRole").classList.add("hidden");if(!hasPermission("usuarios.administrar"))$("#newUser").classList.add("hidden");$("#newUser").onclick=openNewUser;$("#newRole").onclick=openNewRole;$$('[data-access-tab]').forEach(b=>b.onclick=()=>{$$('[data-access-tab]').forEach(x=>x.classList.toggle("active",x===b));$("#accessUsers").classList.toggle("hidden",b.dataset.accessTab!=="users");$("#accessRoles").classList.toggle("hidden",b.dataset.accessTab!=="roles");});await loadAccessAdmin();
 }
 async function loadAccessAdmin(){const [r,p,rp,u]=await Promise.all([supabase.from("roles").select("*").order("nombre"),supabase.from("permisos").select("*").order("modulo").order("accion"),supabase.from("roles_permisos").select("rol_id,permiso_id"),supabase.from("perfiles").select("*,roles(nombre)").order("nombre_completo")]);const error=r.error||p.error||rp.error||u.error;if(error){$("#adminUserRows").innerHTML=`<tr><td colspan="5" class="empty">${escapeHTML(errorText(error))}</td></tr>`;return;}adminRoles=r.data||[];adminPermissions=p.data||[];adminRolePermissions=rp.data||[];adminUsers=u.data||[];paintAdminUsers();paintRoleList();}
-function paintAdminUsers(){$("#adminUserRows").innerHTML=adminUsers.map(u=>`<tr><td><strong>${escapeHTML(u.nombre_completo)}</strong><small>${escapeHTML(u.correo)}</small></td><td>${escapeHTML(u.celular||u.identificacion||"—")}</td><td>${escapeHTML(u.roles?.nombre||"Sin rol")}</td><td><span class="badge ${u.estado!=="activo"?"closed":""}">${capitalize(u.estado)}</span></td><td>${hasPermission("usuarios.administrar")?`<button class="secondary edit-access-user" data-id="${u.id}">Editar acceso</button>`:"Solo lectura"}</td></tr>`).join("")||'<tr><td colspan="5" class="empty">No hay usuarios registrados.</td></tr>';$$(".edit-access-user").forEach(b=>b.onclick=()=>openUserAccess(adminUsers.find(u=>u.id===b.dataset.id)));}
+function paintAdminUsers(){$("#adminUserRows").innerHTML=adminUsers.map(u=>`<tr><td><strong>${escapeHTML(u.nombre_completo)}</strong><small>${escapeHTML(u.correo)}</small></td><td>${escapeHTML(u.celular||"—")}</td><td>${escapeHTML(u.roles?.nombre||"Sin rol")}</td><td><span class="badge ${u.estado!=="activo"?"closed":""}">${capitalize(u.estado)}</span></td><td>${hasPermission("usuarios.administrar")?`<button class="secondary edit-access-user" data-id="${u.id}">Editar usuario</button>`:"Solo lectura"}</td></tr>`).join("")||'<tr><td colspan="5" class="empty">No hay usuarios registrados.</td></tr>';$$(".edit-access-user").forEach(b=>b.onclick=()=>openUserAccess(adminUsers.find(u=>u.id===b.dataset.id)));}
 function paintRoleList(selectedId=adminRoles[0]?.id){$("#roleList").innerHTML=adminRoles.map(r=>`<button class="role-item ${r.id===selectedId?"active":""}" data-role-id="${r.id}"><span><strong>${escapeHTML(r.nombre)}</strong><small>${escapeHTML(r.descripcion||"Sin descripción")}</small></span><em>${adminRolePermissions.filter(x=>x.rol_id===r.id).length}</em></button>`).join("");$$('.role-item').forEach(b=>b.onclick=()=>{paintRoleList(b.dataset.roleId);paintRolePermissions(b.dataset.roleId);});if(selectedId)paintRolePermissions(selectedId);}
 function paintRolePermissions(roleId){const role=adminRoles.find(r=>r.id===roleId),selected=new Set(adminRolePermissions.filter(x=>x.rol_id===roleId).map(x=>x.permiso_id)),groups=[...new Set(adminPermissions.map(p=>p.modulo))];$("#rolePermissionTitle").textContent=`Módulos de ${role?.nombre||"rol"}`;$("#permissionGroups").dataset.roleId=roleId;$("#permissionGroups").innerHTML=groups.map(module=>`<section class="permission-module"><header><label><input type="checkbox" class="module-toggle" data-module="${module}" ${role?.nombre==="Superadministrador"?"disabled":""}> <strong>${moduleName(module)}</strong></label><span>${adminPermissions.filter(p=>p.modulo===module).length} permisos</span></header><div>${adminPermissions.filter(p=>p.modulo===module).map(p=>`<label><input type="checkbox" class="permission-check" data-module="${module}" value="${p.id}" ${selected.has(p.id)?"checked":""} ${role?.nombre==="Superadministrador"?"disabled":""}><span><b>${actionName(p.accion)}</b><small>${escapeHTML(p.descripcion||p.codigo)}</small></span></label>`).join("")}</div></section>`).join("");$$('.module-toggle').forEach(t=>{const checks=$$(`.permission-check[data-module="${t.dataset.module}"]`);t.checked=checks.length>0&&checks.every(c=>c.checked);t.onchange=()=>checks.forEach(c=>c.checked=t.checked);});$("#saveRolePermissions").disabled=role?.nombre==="Superadministrador"||!hasPermission("permisos.administrar");$("#saveRolePermissions").onclick=saveRolePermissions;}
 async function saveRolePermissions(){const roleId=$("#permissionGroups").dataset.roleId,ids=$$('.permission-check:checked').map(x=>x.value);const {error}=await supabase.rpc("guardar_permisos_rol",{p_rol:roleId,p_permisos:ids});if(error)return toast(errorText(error));toast("Permisos del rol actualizados.");await loadAccessAdmin();}
@@ -581,7 +586,34 @@ $("#userForm").onsubmit=async event=>{
   }catch(error){toast(errorText(error));await loadAccessAdmin();}
   finally{button.disabled=false;button.textContent="Crear usuario";}
 };
-function openUserAccess(user){const options=adminRoles.filter(r=>r.activo).map((r,i)=>`${i+1}. ${r.nombre}`).join("\n"),current=Math.max(adminRoles.findIndex(r=>r.id===user.rol_id),0)+1,choice=prompt(`Selecciona el rol para ${user.nombre_completo}:\n${options}`,String(current));if(choice===null)return;const role=adminRoles[Number(choice)-1];if(!role)return toast("Selecciona un número válido.");const state=prompt("Estado: activo, inactivo o suspendido",user.estado);if(state===null||!["activo","inactivo","suspendido"].includes(clean(state).toLowerCase()))return toast("Estado no válido.");supabase.rpc("actualizar_usuario_administracion",{p_usuario:user.id,p_rol:role.id,p_estado:clean(state).toLowerCase()}).then(async({error})=>{if(error)return toast(errorText(error));toast("Acceso del usuario actualizado.");await loadAccessAdmin();});}
+function openUserAccess(user){
+  if(!user)return toast("No fue posible cargar el usuario.");
+  $("#editUserForm").reset();
+  $("#editUserId").value=user.id;
+  $("#editUserName").value=user.nombre_completo||"";
+  $("#editUserEmail").value=user.correo||"";
+  $("#editUserPhone").value=user.celular||"";
+  $("#editUserRole").innerHTML=adminRoles.filter(r=>r.activo).map(r=>`<option value="${r.id}" ${r.id===user.rol_id?"selected":""}>${escapeHTML(r.nombre)}</option>`).join("");
+  $("#editUserState").value=user.estado||"activo";
+  $("#editUserModal").classList.remove("hidden");
+  setTimeout(()=>$("#editUserName").focus(),50);
+}
+$$('[data-close-edit-user]').forEach(b=>b.onclick=()=>$("#editUserModal").classList.add("hidden"));
+$("#editUserForm").onsubmit=async event=>{
+  event.preventDefault();
+  const button=$("#saveEditUser"),payload={usuario_id:$("#editUserId").value,nombre_completo:clean($("#editUserName").value),correo:clean($("#editUserEmail").value).toLowerCase(),celular:clean($("#editUserPhone").value)||null,rol_id:$("#editUserRole").value,estado:$("#editUserState").value};
+  if(!payload.nombre_completo||!payload.correo||!payload.rol_id)return toast("Completa los campos obligatorios.");
+  button.disabled=true;button.textContent="Guardando…";
+  try{
+    const {data,error}=await supabase.functions.invoke("admin-update-user",{body:payload});
+    if(error){let message=error.message;try{const detail=await error.context?.json();message=detail?.error||message;}catch{}throw new Error(message);}
+    if(!data?.ok)throw new Error(data?.error||"No fue posible actualizar el usuario.");
+    $("#editUserModal").classList.add("hidden");
+    toast("Usuario actualizado correctamente.");
+    await loadAccessAdmin();
+  }catch(error){toast(errorText(error));}
+  finally{button.disabled=false;button.textContent="Guardar cambios";}
+};
 const moduleName=value=>({pacientes:"Pacientes",usuarios:"Usuarios",permisos:"Permisos",bitacora:"Bitácora",jornadas:"Jornadas",brigadas:"Brigadas",agenda:"Agenda",pagos:"Pagos básicos",call_center:"Call Center",asistencia:"Asistencia en brigada",brigada:"Cobros en brigada",consultas:"Consultas",documentos_clinicos:"Documentos clínicos",productos:"Tarifas y productos",ventas:"Ventas",recaudos:"Recaudos",reportes:"Reportes"}[value]||capitalize(value));const actionName=value=>({ver:"Ver módulo",crear:"Crear",editar:"Editar",eliminar:"Eliminar",administrar:"Administrar",registrar:"Registrar",gestionar:"Gestionar",confirmar:"Confirmar",cerrar:"Cerrar",cobrar:"Cobrar",cargar:"Cargar archivos",descuento:"Aplicar descuentos",anular:"Anular",incumplir:"Marcar incumplida"}[value]||capitalize(value));
 
 const helpKnowledge=[
