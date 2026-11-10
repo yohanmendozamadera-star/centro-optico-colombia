@@ -402,7 +402,9 @@ async function loadAppointments(){
   const from=$("#appointmentDateFrom")?.value,to=$("#appointmentDateTo")?.value;
   if(!saveDateFilter("appointments",from,to))return;
   $("#appointmentRows").innerHTML=`<tr><td colspan="9" class="empty">Cargando agenda…</td></tr>`;
-  const {data,error}=await supabase.from("agendamientos").select("*, pacientes(id,nombre_completo,numero_identificacion,celular_principal), jornadas(id,nombre,fecha_brigada,municipio), brigadas(id,nombre)").eq("activo",true).gte("created_at",`${from}T00:00:00-05:00`).lt("created_at",`${nextDateValue(to)}T00:00:00-05:00`).order("created_at",{ascending:false}).limit(1000);
+  let query=supabase.from("agendamientos").select("*, pacientes(id,nombre_completo,numero_identificacion,celular_principal), jornadas(id,nombre,fecha_brigada,municipio), brigadas(id,nombre)").eq("activo",true).gte("created_at",`${from}T00:00:00-05:00`).lt("created_at",`${nextDateValue(to)}T00:00:00-05:00`).order("created_at",{ascending:false}).limit(1000);
+  if(String(currentProfile?.roles?.nombre||"").toLowerCase()==="promotor")query=query.eq("creado_por",currentProfile.id);
+  const {data,error}=await query;
   if(error){$("#appointmentRows").innerHTML=`<tr><td colspan="9" class="empty"><b>No fue posible cargar la agenda</b>${escapeHTML(errorText(error))}</td></tr>`;return;}
   appointments=data||[];updateAppointmentStats();fillAppointmentJourneyFilter();paintAppointments(appointments);
 }
