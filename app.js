@@ -138,6 +138,7 @@ $$(".nav[data-view]").forEach(button => button.onclick = async () => {
 });
 
 async function renderDashboard() {
+  if(String(currentProfile?.roles?.nombre||"").toLowerCase()==="promotor")return renderPromoterDashboard();
   $("#pageName").textContent = "Panel principal";
   $("#content").innerHTML = `
     <div class="page-hero"><div><h1>Hola, ${escapeHTML((currentProfile?.nombre_completo || "Yohan").split(" ")[0])}</h1><p>Resumen operativo y financiero en tiempo real.</p></div><button class="primary" id="dashboardReports">Ver reportes →</button></div>
@@ -150,6 +151,20 @@ async function renderDashboard() {
   $("#dashboardStats").innerHTML=`<article class="stat"><span>Pacientes activos</span><strong>${p.count||0}</strong></article><article class="stat"><span>Jornadas operativas</span><strong>${j.count||0}</strong></article><article class="stat"><span>Recaudo neto</span><strong>${cop(income)}</strong></article><article class="stat"><span>Cartera pendiente</span><strong>${cop(pending)}</strong></article>`;
   paintMetricBars("#dashboardAppointmentBars",countBy(a.data||[],"estado"),a.data?.length||0);
   const channels=sumBy(active,"canal","valor");paintMetricBars("#dashboardChannelBars",channels,Math.max(...Object.values(channels),0));
+}
+async function renderPromoterDashboard(){
+  $("#pageName").textContent="Mi gestión";
+  $("#content").innerHTML=`<div class="page-hero"><div><h1>Hola, ${escapeHTML((currentProfile?.nombre_completo||"Promotor").split(" ")[0])}</h1><p>Resumen de tus propios agendamientos, sin información financiera.</p></div><label>Jornada activa<select id="promoterDashboardJourney"><option value="">Todas las jornadas activas</option></select></label></div><div class="stats" id="dashboardStats"><article class="stat"><span>Cargando indicadores</span><strong>…</strong></article></div><div class="analytics-grid"><article class="card"><div class="card-head"><div><h2>Estado de tus citas</h2><p>Cantidades de la jornada seleccionada</p></div></div><div id="dashboardAppointmentBars" class="metric-bars"></div></article><article class="card"><div class="card-head"><div><h2>Alcance de tu gestión</h2><p>Solo se muestran registros creados por ti</p></div></div><div id="promoterDashboardSummary" class="metric-bars"></div></article></div>`;
+  const {data:activeJourneys,error}=await supabase.from("jornadas").select("id,nombre,fecha_brigada,municipio").eq("activo",true).eq("eliminado",false).eq("estado","abierta").order("fecha_brigada",{ascending:true});
+  if(error){$("#dashboardStats").innerHTML=`<div class="notice">${escapeHTML(errorText(error))}</div>`;return;}
+  const select=$("#promoterDashboardJourney");select.innerHTML='<option value="">Todas las jornadas activas</option>'+((activeJourneys||[]).map(j=>`<option value="${j.id}">${escapeHTML(j.nombre)} · ${shortDate(j.fecha_brigada)}</option>`).join(""));
+  select.onchange=loadPromoterDashboardMetrics;await loadPromoterDashboardMetrics();
+}
+async function loadPromoterDashboardMetrics(){
+  const journeyId=$("#promoterDashboardJourney")?.value||"";let query=supabase.from("agendamientos").select("id,paciente_id,estado,jornada_id").eq("creado_por",currentProfile.id).eq("activo",true);if(journeyId)query=query.eq("jornada_id",journeyId);else{const ids=Array.from($("#promoterDashboardJourney")?.options||[]).map(o=>o.value).filter(Boolean);if(!ids.length){$("#dashboardStats").innerHTML='<div class="notice">No hay jornadas activas disponibles.</div>';$("#dashboardAppointmentBars").innerHTML="";$("#promoterDashboardSummary").innerHTML="";return;}query=query.in("jornada_id",ids);}
+  const {data,error}=await query;if(error){$("#dashboardStats").innerHTML=`<div class="notice">${escapeHTML(errorText(error))}</div>`;return;}const rows=data||[],scheduled=new Set(rows.map(x=>x.paciente_id)).size,confirmed=rows.filter(x=>x.estado==="confirmada").length,fulfilled=rows.filter(x=>x.estado==="cumplida").length,pending=rows.filter(x=>x.estado==="registrada").length;
+  $("#dashboardStats").innerHTML=`<article class="stat"><span>Usuarios agendados</span><strong>${scheduled}</strong></article><article class="stat"><span>Usuarios confirmados</span><strong>${confirmed}</strong></article><article class="stat"><span>Pendientes de confirmar</span><strong>${pending}</strong></article><article class="stat"><span>Usuarios atendidos</span><strong>${fulfilled}</strong></article>`;
+  paintMetricBars("#dashboardAppointmentBars",countBy(rows,"estado"),rows.length);paintMetricBars("#promoterDashboardSummary",{Agendados:scheduled,Confirmados:confirmed,Atendidos:fulfilled},Math.max(scheduled,1));
 }
 async function renderPatients() {
   const dateRange=getDateFilter("patients");
