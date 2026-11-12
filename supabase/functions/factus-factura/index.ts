@@ -81,6 +81,49 @@ Deno.serve(async (req: Request) => {
       const ranges = Array.isArray(rawRanges) ? rawRanges : [rawRanges];
       return json({ ok: true, ambiente: baseUrl.includes("sandbox") ? "sandbox" : "produccion", rangos: ranges.map((range: any) => ({ id: range.id, documento: range.document || range.document_name || null, prefijo: range.prefix || null, resolucion: range.resolution_number || null, desde: range.from || null, hasta: range.to || null, vigencia_hasta: range.end_date || null, activo: Boolean(range.is_active), vencido: Boolean(range.is_expired), eliminado: Boolean(range.deleted_at) })) });
     }
+
+    const documentActions = new Set(["descargar_pdf", "descargar_xml", "reenviar_correo"]);
+    if (documentActions.has(String(body?.accion || ""))) {
+      const { data: canView, error: viewPermissionError } = await supabase.rpc("tiene_permiso", { p_codigo: "facturacion.ver" });
+      if (viewPermissionError) throw viewPermissionError;
+      const { data: canIssue, error: issuePermissionError } = await supabase.rpc("tiene_permiso", { p_codigo: "facturacion.emitir" });
+      if (issuePermissionError) throw issuePermissionError;
+      if (!canView && !canIssue) return json({ error: "No tienes permiso para consultar documentos electronicos" }, 403);
+
+      const invoiceId = String(body?.factura_id || "");
+      if (!invoiceId) return json({ error: "Falta identificar la factura" }, 400);
+      const { data: storedInvoice, error: storedInvoiceError } = await supabase.from("facturas_electronicas")
+        .select("id,estado,numero_factura,cliente_correo")
+        .eq("id", invoiceId).single();
+      if (storedInvoiceError) throw storedInvoiceError;
+      if (storedInvoice.estado !== "validada" || !storedInvoice.numero_factura) return json({ error: "La factura todavia no esta validada" }, 409);
+
+      const baseUrl = Deno.env.get("FACTUS_BASE_URL") || "https://api-sandbox.factus.com.co";
+      const credentials = new URLSearchParams({ grant_type: "password", client_id: requiredSecret("FACTUS_CLIENT_ID"), client_secret: requiredSecret("FACTUS_CLIENT_SECRET"), username: requiredSecret("FACTUS_USERNAME"), password: requiredSecret("FACTUS_PASSWORD") });
+      const tokenResponse = await withTimeout(`${baseUrl}/oauth/token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" }, body: credentials });
+      const tokenPayload = await tokenResponse.json().catch(() => ({}));
+      if (!tokenResponse.ok || !tokenPayload?.access_token) return json({ error: factusError(tokenPayload, "Factus rechazo la autenticacion") }, 400);
+      const headers = { Authorization: `Bearer ${tokenPayload.access_token}`, Accept: "application/json" };
+      const number = encodeURIComponent(storedInvoice.numero_factura);
+
+      if (body.accion === "reenviar_correo") {
+        if (!canIssue) return json({ error: "No tienes permiso para reenviar facturas" }, 403);
+        if (!storedInvoice.cliente_correo) return json({ error: "La factura no tiene un correo de destinatario" }, 409);
+        const response = await withTimeout(`${baseUrl}/v2/bills/${number}/send-email`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ email: storedInvoice.cliente_correo }) });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) return json({ error: factusError(payload, "Factus no pudo reenviar el correo") }, 400);
+        return json({ ok: true, message: "Factura reenviada al correo registrado" });
+      }
+
+      const kind = body.accion === "descargar_pdf" ? "pdf" : "xml";
+      const response = await withTimeout(`${baseUrl}/v2/bills/${number}/download-${kind}`, { headers });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) return json({ error: factusError(payload, `Factus no pudo descargar el ${kind.toUpperCase()}`) }, 400);
+      const data = payload?.data || payload;
+      const content = data?.[`${kind}_base_64_encoded`] || data?.base64 || data?.content;
+      if (!content) return json({ error: `Factus no devolvio el contenido del ${kind.toUpperCase()}` }, 502);
+      return json({ ok: true, content, file_name: data?.file_name || data?.filename || `${storedInvoice.numero_factura}.${kind}`, mime: kind === "pdf" ? "application/pdf" : "application/xml" });
+    }
     ventaId = String(body?.venta_id || "");
     if (!ventaId) return json({ error: "Falta la venta que se va a facturar" }, 400);
 
@@ -219,8 +262,8 @@ Deno.serve(async (req: Request) => {
       factus_id: String(bill?.id || bill?.bill_id || "") || null,
       numero_factura: bill?.number || bill?.document_number || bill?.bill_number || null,
       cufe: bill?.cufe || bill?.uuid || null,
-      codigo_qr: bill?.qr || bill?.qr_code || null,
-      url_pdf: bill?.pdf_url || bill?.public_url || null,
+      codigo_qr: bill?.qr || bill?.qr_code || bill?.links?.qr || null,
+      url_pdf: bill?.pdf_url || bill?.links?.public_url || bill?.public_url || null,
       url_xml: bill?.xml_url || null,
       respuesta: billPayload,
       ultimo_error: null,
