@@ -97,7 +97,7 @@ Deno.serve(async (req: Request) => {
         .select("*, conceptos_facturacion(nombre,codigo_referencia,unidad_medida_codigo,codigo_estandar,excluido_iva)")
         .eq("venta_id", ventaId).single(),
       supabase.from("ventas")
-        .select("id,numero_venta,subtotal,descuento,total,abono,saldo,metodo_pago,fecha_entrega,observaciones,ventas_detalle(cantidad,precio_unitario,subtotal,monturas(nombre),tipos_lente(nombre),materiales(nombre),filtros(nombre),tratamientos(nombre),fabricaciones(nombre))")
+        .select("id,numero_venta,subtotal,descuento,total,abono,saldo,metodo_pago,fecha_entrega,observaciones,ventas_detalle(cantidad,precio_unitario,descuento,subtotal,codigo_referencia,descripcion,productos_servicios(nombre,codigo,categoria,unidad_medida_codigo,codigo_estandar,excluido_iva),monturas(nombre),tipos_lente(nombre),materiales(nombre),filtros(nombre),tratamientos(nombre),fabricaciones(nombre))")
         .eq("id", ventaId).single(),
     ]);
     if (invoiceError || saleError) throw invoiceError || saleError;
@@ -145,7 +145,7 @@ Deno.serve(async (req: Request) => {
       updated_at: new Date().toISOString(),
     }).eq("id", true);
 
-    const concept = invoice.conceptos_facturacion;
+    const concept = invoice.conceptos_facturacion || { nombre: "Producto o servicio", codigo_referencia: "ITEM", unidad_medida_codigo: "94", codigo_estandar: "999", excluido_iva: true };
     const isCredit = Number(sale.saldo) > 0;
     const discountAmount = Number(sale.descuento || 0);
     const paid = Number(sale.abono || 0);
@@ -185,17 +185,19 @@ Deno.serve(async (req: Request) => {
         ...(invoice.cliente_municipio_codigo ? { municipality_code: invoice.cliente_municipio_codigo } : {}),
       },
       items: (sale.ventas_detalle || []).map((detail: any, index: number) => {
-        const description = [detail.monturas?.nombre, detail.tipos_lente?.nombre, detail.materiales?.nombre, detail.filtros?.nombre, detail.tratamientos?.nombre, detail.fabricaciones?.nombre].filter(Boolean).join(" · ") || concept.nombre;
+        const product = detail.productos_servicios || {};
+        const specifications = [detail.descripcion && detail.descripcion !== product.nombre ? detail.descripcion : null, detail.tipos_lente?.nombre, detail.materiales?.nombre, detail.filtros?.nombre, detail.tratamientos?.nombre, detail.fabricaciones?.nombre].filter(Boolean);
+        const description = [product.nombre, ...new Set(specifications)].filter(Boolean).join(" · ") || concept.nombre;
         const lineDiscount = Math.max(Number(detail.precio_unitario || 0) * Number(detail.cantidad || 1) - Number(detail.subtotal || 0), 0);
         return {
-          code_reference: `${concept.codigo_referencia}-${index + 1}`.slice(0, 50),
+          code_reference: String(detail.codigo_referencia || product.codigo || `${concept.codigo_referencia}-${index + 1}`).slice(0, 50),
           name: description.slice(0, 160),
           quantity: Number(detail.cantidad || 1).toFixed(2),
           price: Number(detail.precio_unitario || 0).toFixed(2),
           ...(lineDiscount > 0 ? { discount_amount: lineDiscount.toFixed(2) } : {}),
-          unit_measure_code: concept.unidad_medida_codigo || "94",
-          standard_code: concept.codigo_estandar || "999",
-          taxes: concept.excluido_iva ? [{ is_excluded: true }] : [{ code: "01", rate: "0.00" }],
+          unit_measure_code: product.unidad_medida_codigo || concept.unidad_medida_codigo || "94",
+          standard_code: product.codigo_estandar || concept.codigo_estandar || "999",
+          taxes: (product.excluido_iva ?? concept.excluido_iva) ? [{ is_excluded: true }] : [{ code: "01", rate: "0.00" }],
         };
       }),
     };
