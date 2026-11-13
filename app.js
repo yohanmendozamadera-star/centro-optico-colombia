@@ -61,6 +61,12 @@ const saveDateFilter = (scope,from,to) => {
 };
 const nextDateValue = value => {const date=new Date(`${value}T12:00:00Z`);date.setUTCDate(date.getUTCDate()+1);return date.toISOString().slice(0,10);};
 const withTimeout = (request,ms=20000) => Promise.race([request,new Promise((_,reject)=>setTimeout(()=>reject(new Error("La conexión tardó demasiado. Revisa la lista antes de intentarlo nuevamente.")),ms))]);
+const replaceInitialZero = input => {
+  if(!input)return;
+  input.addEventListener("focus",()=>{if(String(input.value).trim()==="0")requestAnimationFrame(()=>input.select());});
+  input.addEventListener("pointerup",event=>{if(String(input.value).trim()==="0"){event.preventDefault();input.select();}});
+};
+[$("#saleDiscount"),$("#salePayment"),$("#saleProductPrice")].forEach(replaceInitialZero);
 
 async function boot() {
   const { data } = await supabase.auth.getSession();
@@ -827,5 +833,5 @@ const localDateValue=date=>`${date.getFullYear()}-${String(date.getMonth()+1).pa
 const cop=value=>new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0}).format(Number(value||0));
 const capitalize=value=>String(value||"").charAt(0).toUpperCase()+String(value||"").slice(1);
 supabase.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_OUT")showAuth();if(event==="PASSWORD_RECOVERY"){passwordRecoveryActive=true;setTimeout(()=>openPasswordModal({recovery:true}),0);}});
-if("serviceWorker" in navigator){window.addEventListener("load",async()=>{try{const registration=await navigator.serviceWorker.register("./service-worker.js?v=11");await registration.update();}catch{}});}
+if("serviceWorker" in navigator){window.addEventListener("load",async()=>{try{const registration=await navigator.serviceWorker.register("./service-worker.js?v=12");await registration.update();}catch{}});}
 boot();
