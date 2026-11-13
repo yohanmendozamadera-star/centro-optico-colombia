@@ -231,12 +231,17 @@ Deno.serve(async (req: Request) => {
         const product = detail.productos_servicios || {};
         const specifications = [detail.descripcion && detail.descripcion !== product.nombre ? detail.descripcion : null, detail.tipos_lente?.nombre, detail.materiales?.nombre, detail.filtros?.nombre, detail.tratamientos?.nombre, detail.fabricaciones?.nombre].filter(Boolean);
         const description = [product.nombre, ...new Set(specifications)].filter(Boolean).join(" · ") || concept.nombre;
-        const lineDiscount = Math.max(Number(detail.precio_unitario || 0) * Number(detail.cantidad || 1) - Number(detail.subtotal || 0), 0);
+        const quantity = Number(detail.cantidad || 1);
+        const storedPrice = Number(detail.precio_unitario || 0);
+        const reportedPrice = storedPrice > 0 ? storedPrice : 0.01;
+        const lineDiscount = storedPrice > 0
+          ? Math.max(storedPrice * quantity - Number(detail.subtotal || 0), 0)
+          : reportedPrice * quantity;
         return {
           code_reference: String(detail.codigo_referencia || product.codigo || `${concept.codigo_referencia}-${index + 1}`).slice(0, 50),
           name: description.slice(0, 160),
-          quantity: Number(detail.cantidad || 1).toFixed(2),
-          price: Number(detail.precio_unitario || 0).toFixed(2),
+          quantity: quantity.toFixed(2),
+          price: reportedPrice.toFixed(2),
           ...(lineDiscount > 0 ? { discount_amount: lineDiscount.toFixed(2) } : {}),
           unit_measure_code: product.unidad_medida_codigo || concept.unidad_medida_codigo || "94",
           standard_code: product.codigo_estandar || concept.codigo_estandar || "999",
