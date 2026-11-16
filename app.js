@@ -14,7 +14,6 @@ let brigades = [];
 let appointments = [];
 let appointmentContextBrigade = null;
 let patientCreatedFromAppointment = false;
-let capturedPatientLocation = null;
 let callGestures = [];
 let callCenterJourneyId = "";
 let attendanceBrigade = null;
@@ -220,29 +219,13 @@ function historyGroup(title,items){return `<section class="history-group"><h3>${
 function patientAuditSummary(entry){if(entry.accion==="insert")return "Paciente creado";const before=entry.informacion_anterior||{},after=entry.informacion_nueva||{};const labels={numero_identificacion:"identificación",nombre_completo:"nombre",celular_principal:"celular principal",celular_alternativo:"celular alternativo",correo:"correo",fecha_nacimiento:"fecha de nacimiento",genero:"género"};const changes=Object.keys(labels).filter(k=>String(before[k]??"")!==String(after[k]??"")).map(k=>`${labels[k]}: “${before[k]??"vacío"}” → “${after[k]??"vacío"}”`);return changes.length?escapeHTML(changes.join(" · ")):"Registro actualizado";}
 function openPatient(patient=null) {
   $("#patientForm").reset(); $("#patientId").value=patient?.id||""; $("#patientModalTitle").textContent=patient?"Editar paciente":"Nuevo paciente"; $("#duplicateAlert").classList.add("hidden");
-  capturedPatientLocation=patient?{ubicacion_registro:patient.ubicacion_registro,latitud_registro:patient.latitud_registro,longitud_registro:patient.longitud_registro,precision_ubicacion_metros:patient.precision_ubicacion_metros}:null;
-  if(patient){ $("#documentType").value=patient.tipo_identificacion;$("#documentNumber").value=patient.numero_identificacion;$("#fullName").value=patient.nombre_completo;$("#phone").value=patient.celular_principal;$("#alternatePhone").value=patient.celular_alternativo||"";$("#gender").value=patient.genero||"";$("#birthDate").value=patient.fecha_nacimiento||"";$("#notes").value=patient.observaciones||"";$("#patientLocationStatus").textContent=patient.ubicacion_registro?`Ubicación guardada: ${patient.ubicacion_registro}`:"Este paciente no tiene ubicación registrada.";}
-  else{$("#patientLocationStatus").textContent="Solicitando autorización para obtener la ubicación aproximada…";capturePatientLocation();}
+  if(patient){ $("#documentType").value=patient.tipo_identificacion;$("#documentNumber").value=patient.numero_identificacion;$("#fullName").value=patient.nombre_completo;$("#phone").value=patient.celular_principal;$("#alternatePhone").value=patient.celular_alternativo||"";$("#gender").value=patient.genero||"";$("#notes").value=patient.observaciones||"";}
   $("#patientModal").classList.remove("hidden");
-}
-$("#retryLocation").onclick=capturePatientLocation;
-function capturePatientLocation(){
-  const status=$("#patientLocationStatus");
-  if(!navigator.geolocation){status.textContent="Este dispositivo no permite obtener la ubicación.";return;}
-  status.textContent="Esperando autorización de ubicación…";
-  navigator.geolocation.getCurrentPosition(async position=>{
-    const {latitude,longitude,accuracy}=position.coords;let label=`Latitud ${latitude.toFixed(5)}, longitud ${longitude.toFixed(5)}`;
-    try{
-      const response=await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=14&addressdetails=1`,{headers:{"Accept-Language":"es"}});
-      if(response.ok){const result=await response.json(),a=result.address||{},place=a.village||a.town||a.city||a.municipality||a.county;label=[place,a.state,a.country].filter(Boolean).join(", ")||result.display_name||label;}
-    }catch{}
-    capturedPatientLocation={ubicacion_registro:label,latitud_registro:latitude,longitud_registro:longitude,precision_ubicacion_metros:accuracy};status.textContent=`Ubicación obtenida: ${label}`;
-  },error=>{capturedPatientLocation=null;status.textContent=error.code===1?"No autorizaste la ubicación. Puedes continuar sin ella.":"No fue posible obtener la ubicación. Puedes intentar nuevamente.";},{enableHighAccuracy:false,timeout:10000,maximumAge:300000});
 }
 $$("[data-close]").forEach(btn=>btn.onclick=()=>{ $("#patientModal").classList.add("hidden"); if(patientCreatedFromAppointment){patientCreatedFromAppointment=false;$("#appointmentModal").classList.remove("hidden");} });
 $("#patientForm").onsubmit=async event=>{
   event.preventDefault(); const id=$("#patientId").value;
-  const record={tipo_identificacion:$("#documentType").value,numero_identificacion:clean($("#documentNumber").value),nombre_completo:clean($("#fullName").value),celular_principal:clean($("#phone").value),celular_alternativo:clean($("#alternatePhone").value)||null,genero:$("#gender").value||null,fecha_nacimiento:$("#birthDate").value||null,observaciones:clean($("#notes").value)||null,...(capturedPatientLocation||{})};
+  const record={tipo_identificacion:$("#documentType").value,numero_identificacion:clean($("#documentNumber").value),nombre_completo:clean($("#fullName").value),celular_principal:clean($("#phone").value),celular_alternativo:clean($("#alternatePhone").value)||null,genero:$("#gender").value||null,observaciones:clean($("#notes").value)||null};
   const {data:duplicates,error:duplicateError}=await supabase.rpc("buscar_duplicado_paciente",{p_paciente_id:id||null,p_identificacion:record.numero_identificacion,p_celular:record.celular_principal});
   if(duplicateError)return toast(errorText(duplicateError));const duplicate=duplicates?.[0];
   if(duplicate){const alert=$("#duplicateAlert");alert.textContent=`Posible duplicado: ${duplicate.nombre_completo}, ${duplicate.numero_identificacion}, ${duplicate.celular_principal}. Revisa antes de continuar.`;alert.classList.remove("hidden");return;}
@@ -839,5 +822,5 @@ const localDateValue=date=>`${date.getFullYear()}-${String(date.getMonth()+1).pa
 const cop=value=>new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0}).format(Number(value||0));
 const capitalize=value=>String(value||"").charAt(0).toUpperCase()+String(value||"").slice(1);
 supabase.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_OUT")showAuth();if(event==="PASSWORD_RECOVERY"){passwordRecoveryActive=true;setTimeout(()=>openPasswordModal({recovery:true}),0);}});
-if("serviceWorker" in navigator){window.addEventListener("load",async()=>{try{const registration=await navigator.serviceWorker.register("./service-worker.js?v=13");await registration.update();}catch{}});}
+if("serviceWorker" in navigator){window.addEventListener("load",async()=>{try{const registration=await navigator.serviceWorker.register("./service-worker.js?v=14");await registration.update();}catch{}});}
 boot();
