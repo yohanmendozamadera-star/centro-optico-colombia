@@ -24,6 +24,27 @@ async function ensureBoldLink(admin:any,charge:any,config:any){
   return {...charge,bold_link:url,bold_referencia:paymentLink,bold_entorno:testMode?"pruebas":"produccion"};
 }
 
+async function refreshBoldStatus(admin:any,charge:any,config:any){
+  if(!charge.bold_referencia||charge.estado==="pagado")return charge;
+  const testMode=config.ambiente!=="produccion",identityKey=env(testMode?"BOLD_IDENTITY_KEY_TEST":"BOLD_IDENTITY_KEY");
+  const response=await fetch(`https://integrations.api.bold.co/online/link/v1/${encodeURIComponent(charge.bold_referencia)}`,{headers:{Authorization:`x-api-key ${identityKey}`}});
+  const payload=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(payload?.message||`No fue posible consultar el pago en Bold (${response.status})`);
+  const result=payload?.payload||payload,status=String(result?.status||"").toUpperCase();
+  const mapped=status==="PAID"?"pagado":status==="EXPIRED"?"vencido":["REJECTED","CANCELLED"].includes(status)?"fallido":charge.estado;
+  if(mapped===charge.estado)return charge;
+  const update:any={estado:mapped,bold_transaccion:result?.transaction_id||charge.bold_transaccion,metodo_pago:result?.payment_method||charge.metodo_pago,updated_at:new Date().toISOString()};
+  if(mapped==="pagado")update.pagado_at=new Date().toISOString();
+  const {error}=await admin.from("cobros_suscripcion").update(update).eq("id",charge.id);if(error)throw error;
+  if(mapped==="pagado"){
+    await Promise.all([
+      admin.from("configuracion_suscripcion").update({estado:"activa",updated_at:new Date().toISOString()}).eq("id",true),
+      admin.from("notificaciones_suscripcion").update({estado:"omitida",updated_at:new Date().toISOString()}).eq("cobro_id",charge.id).in("estado",["programada","error"]),
+    ]);
+  }
+  return {...charge,...update};
+}
+
 async function sendEmail(notification:any,charge:any){
   const apiKey=env("RESEND_API_KEY"),fromEmail=env("RESEND_FROM_EMAIL"),fromName=env("RESEND_FROM_NAME"),replyTo=env("RESEND_REPLY_TO");
   const isGenerated=notification.tipo==="cobro_generado",isRestricted=notification.tipo==="restriccion";
@@ -59,11 +80,12 @@ Deno.serve(async(req:Request)=>{
     const results=[];
     for(const notification of rows||[]){
       let charge=(notification as any).cobros_suscripcion;
-      if(!charge||charge.estado==="pagado"||charge.estado==="anulado"){
-        await admin.from("notificaciones_suscripcion").update({estado:"omitida",updated_at:new Date().toISOString()}).eq("id",notification.id);
-        results.push({id:notification.id,estado:"omitida"});continue;
-      }
       try{
+        if(charge?.bold_referencia)charge=await refreshBoldStatus(admin,charge,config);
+        if(!charge||charge.estado==="pagado"||charge.estado==="anulado"){
+          await admin.from("notificaciones_suscripcion").update({estado:"omitida",updated_at:new Date().toISOString()}).eq("id",notification.id);
+          results.push({id:notification.id,estado:"omitida"});continue;
+        }
         charge=await ensureBoldLink(admin,charge,config);
         const emailId=await sendEmail(notification,charge);
         await admin.from("notificaciones_suscripcion").update({estado:"enviada",enviada_at:new Date().toISOString(),intentos:Number(notification.intentos||0)+1,ultimo_error:null,updated_at:new Date().toISOString()}).eq("id",notification.id);
