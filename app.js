@@ -140,6 +140,7 @@ $$(".nav[data-view]").forEach(button => button.onclick = async () => {
   if (view === "journeys") await renderJourneys();
   if (view === "brigades") await renderBrigades();
   if (view === "appointments") await renderAppointments();
+  if (view === "patient_lookup") await renderPromoterUserLookup();
   if (view === "callcenter") await renderCallCenter();
   if (view === "consultations") await renderConsultations();
   if (view === "products") await renderProducts();
@@ -197,26 +198,62 @@ async function loadPromoterDashboardMetrics(){
   paintMetricBars("#dashboardAppointmentBars",countBy(rows,"estado"),rows.length);paintMetricBars("#promoterDashboardSummary",{Agendados:scheduled,Confirmados:confirmed,Atendidos:fulfilled},Math.max(scheduled,1));
 }
 async function renderPatients() {
-  const dateRange=getDateFilter("patients");
   $("#pageName").textContent = "Pacientes";
   $("#content").innerHTML = `<div class="page-hero"><div><h1>Consultar paciente</h1><p>La información permanece oculta hasta realizar una búsqueda.</p></div>${hasPermission("pacientes.crear")?'<button class="primary" id="newPatient">＋ Nuevo paciente</button>':""}</div>
     <article class="card"><div class="card-head"><div><h2>Consulta privada</h2><p>Selecciona un criterio y escribe el dato que deseas consultar</p></div></div>
-    <form class="patient-query" id="patientQueryForm"><label>Fecha inicio<input type="date" id="patientDateFrom" value="${dateRange.from}" required></label><label>Fecha fin<input type="date" id="patientDateTo" value="${dateRange.to}" required></label><label>Consultar por<select id="patientSearchType"><option value="identificacion">Identificación</option><option value="celular">Celular</option><option value="nombre">Nombre y apellido</option></select></label><label class="query-value">Dato a consultar<input id="patientSearch" autocomplete="off" placeholder="Escribe la identificación completa…" required></label><button class="primary" type="submit">Consultar</button><button class="secondary" id="clearPatientSearch" type="button">Limpiar</button></form>
+    <form class="patient-query" id="patientQueryForm"><label>Consultar por<select id="patientSearchType"><option value="identificacion">Identificación</option><option value="celular">Celular</option><option value="nombre">Nombre y apellido</option></select></label><label class="query-value">Dato a consultar<input id="patientSearch" autocomplete="off" placeholder="Escribe la identificación completa…" required></label><button class="primary" type="submit">Consultar</button><button class="secondary" id="clearPatientSearch" type="button">Limpiar</button></form>
     <div class="privacy-note">🔒 No se muestra ningún directorio general. Los resultados aparecen únicamente después de consultar.</div>
     <div class="table-wrap"><table><thead><tr><th>Paciente</th><th>Identificación</th><th>Celular</th><th>Registro</th><th>Acciones</th></tr></thead><tbody id="patientRows"><tr><td colspan="5" class="empty"><b>Realiza una consulta</b>Busca por identificación, celular o nombre y apellido.</td></tr></tbody></table></div></article>
     <section id="patientHistory" class="hidden"></section>`;
   if($("#newPatient"))$("#newPatient").onclick = () => openPatient();
   $("#patientQueryForm").onsubmit=async event=>{event.preventDefault();await loadPatients();};
-  ["#patientDateFrom","#patientDateTo"].forEach(selector=>$(selector).onchange=async()=>{const from=$("#patientDateFrom").value,to=$("#patientDateTo").value;if(saveDateFilter("patients",from,to)&&clean($("#patientSearch").value))await loadPatients();});
   $("#patientSearchType").onchange=()=>{const type=$("#patientSearchType").value;$("#patientSearch").value="";$("#patientSearch").placeholder=type==="identificacion"?"Escribe la identificación completa…":type==="celular"?"Escribe el celular…":"Escribe nombre y apellido…";clearPatientResults();};
   $("#clearPatientSearch").onclick=()=>{$("#patientSearch").value="";clearPatientResults();};
 }
+async function renderPromoterUserLookup(){
+  $("#pageName").textContent="Usuarios";
+  $("#content").innerHTML=`<div class="page-hero"><div><h1>Consultar usuarios</h1><p>Busca un paciente registrado por cédula, celular o nombre.</p></div></div>
+    <article class="card promoter-user-search-card"><div class="card-head"><div><h2>Búsqueda de pacientes</h2><p>La cédula y el celular se consultan de forma exacta. El nombre puede mostrar varias coincidencias.</p></div></div>
+      <form id="promoterUserSearchForm" class="promoter-user-search">
+        <label>Buscar por<select id="promoterUserSearchType"><option value="identificacion">Cédula</option><option value="celular">Celular</option><option value="nombre">Nombre</option></select></label>
+        <label class="promoter-user-query">Dato a consultar<input id="promoterUserSearchValue" autocomplete="off" placeholder="Escribe la cédula completa…" required></label>
+        <button class="primary" type="submit">Buscar</button><button class="secondary" id="clearPromoterUserSearch" type="button">Limpiar</button>
+      </form>
+      <div class="privacy-note">🔒 Los datos solo aparecen después de realizar una búsqueda.</div>
+      <div id="promoterUserSearchResults" class="promoter-user-results"><div class="empty"><b>Consulta un usuario</b>Escribe la cédula, el celular o al menos tres letras del nombre.</div></div>
+    </article><section id="promoterUserDetail"></section>`;
+  const type=$("#promoterUserSearchType"),input=$("#promoterUserSearchValue");
+  type.onchange=()=>{input.value="";input.placeholder=type.value==="identificacion"?"Escribe la cédula completa…":type.value==="celular"?"Escribe el celular completo…":"Escribe el nombre…";clearPromoterUserLookup();input.focus();};
+  $("#promoterUserSearchForm").onsubmit=async event=>{event.preventDefault();await searchPromoterUsers();};
+  $("#clearPromoterUserSearch").onclick=()=>{input.value="";clearPromoterUserLookup();input.focus();};
+  input.focus();
+}
+function clearPromoterUserLookup(){promoterUserMatches=[];$("#promoterUserSearchResults").innerHTML='<div class="empty"><b>Consulta un usuario</b>Escribe la cédula, el celular o al menos tres letras del nombre.</div>';$("#promoterUserDetail").innerHTML="";}
+let promoterUserMatches=[];
+async function searchPromoterUsers(){
+  const type=$("#promoterUserSearchType").value,value=clean($("#promoterUserSearchValue").value),minimum=type==="nombre"?3:4;
+  if(value.length<minimum)return toast(type==="nombre"?"Escribe al menos 3 letras del nombre.":"Escribe el dato completo para consultar.");
+  const box=$("#promoterUserSearchResults");box.innerHTML='<div class="empty">Consultando…</div>';$("#promoterUserDetail").innerHTML="";
+  const {data,error}=await supabase.rpc("buscar_pacientes",{p_tipo:type,p_valor:value});
+  if(error){box.innerHTML=`<div class="empty"><b>No fue posible consultar</b>${escapeHTML(errorText(error))}</div>`;return;}
+  promoterUserMatches=data||[];
+  if(!promoterUserMatches.length){box.innerHTML='<div class="empty"><b>No encontramos coincidencias</b>Revisa el dato ingresado o registra el paciente desde Agenda.</div>';return;}
+  if(promoterUserMatches.length===1)return selectPromoterUser(promoterUserMatches[0].id);
+  box.innerHTML=`<div class="promoter-user-match-title">Encontramos ${promoterUserMatches.length} usuarios. Selecciona el correcto:</div><div class="promoter-user-match-list">${promoterUserMatches.map(p=>`<button type="button" class="search-result promoter-user-match" data-id="${p.id}"><strong>${escapeHTML(p.nombre_completo)}</strong><small>${escapeHTML(p.tipo_identificacion)} ${escapeHTML(p.numero_identificacion)} · ${escapeHTML(p.celular_principal||"Sin celular")}</small></button>`).join("")}</div>`;
+  $$(".promoter-user-match").forEach(button=>button.onclick=()=>selectPromoterUser(button.dataset.id));
+}
+function selectPromoterUser(id){
+  const patient=promoterUserMatches.find(item=>item.id===id);if(!patient)return;
+  $("#promoterUserSearchResults").innerHTML=`<div class="selected-user-notice">Usuario seleccionado: <b>${escapeHTML(patient.nombre_completo)}</b>${promoterUserMatches.length>1?'<button type="button" class="secondary" id="changePromoterUser">Cambiar</button>':""}</div>`;
+  $("#promoterUserDetail").innerHTML=`<article class="card promoter-user-detail"><div class="card-head"><div><h2>${escapeHTML(patient.nombre_completo)}</h2><p>Datos básicos del paciente</p></div><span class="badge">Activo</span></div><div class="profile-data promoter-user-data"><div><span>Tipo de identificación</span><strong>${escapeHTML(patient.tipo_identificacion||"—")}</strong></div><div><span>Número de identificación</span><strong>${escapeHTML(patient.numero_identificacion||"—")}</strong></div><div><span>Celular principal</span><strong>${escapeHTML(patient.celular_principal||"—")}</strong></div><div><span>Celular alternativo</span><strong>${escapeHTML(patient.celular_alternativo||"—")}</strong></div><div><span>Correo</span><strong>${escapeHTML(patient.correo||"—")}</strong></div><div><span>Género</span><strong>${escapeHTML(patient.genero?capitalize(patient.genero):"—")}</strong></div></div></article>`;
+  if($("#changePromoterUser"))$("#changePromoterUser").onclick=()=>{$("#promoterUserSearchForm").requestSubmit();};
+  $("#promoterUserDetail").scrollIntoView({behavior:"smooth",block:"nearest"});
+}
 async function loadPatients() {
-  const type=$("#patientSearchType")?.value||"identificacion",value=clean($("#patientSearch")?.value),from=$("#patientDateFrom")?.value,to=$("#patientDateTo")?.value;
-  if(!saveDateFilter("patients",from,to))return;
+  const type=$("#patientSearchType")?.value||"identificacion",value=clean($("#patientSearch")?.value);
   if(value.length<(type==="nombre"?3:4))return toast(type==="nombre"?"Escribe al menos 3 letras.":"Escribe al menos 4 números.");
   $("#patientRows").innerHTML=`<tr><td colspan="5" class="empty">Consultando…</td></tr>`;
-  const { data, error } = await supabase.rpc("buscar_pacientes_rango",{p_tipo:type,p_valor:value,p_desde:from,p_hasta:to});
+  const { data, error } = await supabase.rpc("buscar_pacientes",{p_tipo:type,p_valor:value});
   if (error) { $("#patientRows").innerHTML = `<tr><td colspan="5" class="empty"><b>No fue posible realizar la consulta</b>${escapeHTML(errorText(error))}</td></tr>`; return; }
   patients = data || []; paintPatients(patients);
 }
@@ -246,9 +283,9 @@ $$("[data-close]").forEach(btn=>btn.onclick=()=>{ $("#patientModal").classList.a
 $("#patientForm").onsubmit=async event=>{
   event.preventDefault(); const id=$("#patientId").value;
   const record={tipo_identificacion:$("#documentType").value,numero_identificacion:clean($("#documentNumber").value),nombre_completo:clean($("#fullName").value),celular_principal:clean($("#phone").value),celular_alternativo:clean($("#alternatePhone").value)||null,genero:$("#gender").value||null,observaciones:clean($("#notes").value)||null};
-  const {data:duplicates,error:duplicateError}=await supabase.rpc("buscar_duplicado_paciente",{p_paciente_id:id||null,p_identificacion:record.numero_identificacion,p_celular:record.celular_principal});
+  const {data:duplicates,error:duplicateError}=await supabase.rpc("buscar_duplicado_paciente",{p_paciente_id:id||null,p_identificacion:record.numero_identificacion,p_celular:null});
   if(duplicateError)return toast(errorText(duplicateError));const duplicate=duplicates?.[0];
-  if(duplicate){const alert=$("#duplicateAlert");alert.textContent=`Posible duplicado: ${duplicate.nombre_completo}, ${duplicate.numero_identificacion}, ${duplicate.celular_principal}. Revisa antes de continuar.`;alert.classList.remove("hidden");return;}
+  if(duplicate){const alert=$("#duplicateAlert");alert.textContent=`La identificación ${duplicate.numero_identificacion} ya pertenece a ${duplicate.nombre_completo}. La identificación debe ser única; el celular sí puede compartirse entre familiares.`;alert.classList.remove("hidden");return;}
   let savedPatient=null,error=null;
   if(id){const result=await supabase.from("pacientes").update(record).eq("id",id).select().single();savedPatient=result.data;error=result.error;}
   else{const result=await supabase.from("pacientes").insert(record).select().single();savedPatient=result.data;error=result.error;}
@@ -724,7 +761,7 @@ function paintMetricBars(selector,data,max){const node=$(selector);if(!node)retu
 function csvDownload(name,headers,rows){const quote=v=>`"${String(v??"").replace(/"/g,'""')}"`,content="\ufeff"+[headers,...rows].map(r=>r.map(quote).join(";")).join("\r\n"),url=URL.createObjectURL(new Blob([content],{type:"text/csv;charset=utf-8"})),a=document.createElement("a");a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);}function exportPaymentCsv(list){csvDownload(`recaudos-${localDateValue(new Date())}.csv`,["Fecha","Paciente","Identificación","Jornada","Tipo","Canal","Medio","Usuario","Valor","Estado"],list.map(x=>[x.created_at,x.pacientes?.nombre_completo,x.pacientes?.numero_identificacion,x.jornadas?.nombre,x.tipo,x.canal,x.metodo_pago,x.perfiles?.nombre_completo,x.valor,x.estado]));}function exportReportCsv(){const list=reportAppointments();csvDownload(`reporte-jornadas-${localDateValue(new Date())}.csv`,["Jornada","Municipio","Fecha","Promotor","Estado cita","Fecha registro"],list.map(x=>[x.jornadas?.nombre,x.jornadas?.municipio,x.jornadas?.fecha_brigada,x.perfiles?.nombre_completo,x.estado,x.created_at]));}
 
 async function loadCurrentPermissions(){const [rp,up]=await Promise.all([supabase.from("roles_permisos").select("permisos(codigo)").eq("rol_id",currentProfile?.rol_id||"00000000-0000-0000-0000-000000000000"),supabase.from("usuarios_permisos").select("permitido,permisos(codigo)").eq("usuario_id",currentProfile?.id||"00000000-0000-0000-0000-000000000000")]);currentPermissions=new Set((rp.data||[]).map(x=>x.permisos?.codigo).filter(Boolean));(up.data||[]).forEach(x=>{const code=x.permisos?.codigo;if(code)x.permitido?currentPermissions.add(code):currentPermissions.delete(code);});applyNavigationPermissions();}
-function hasPermission(code){return currentProfile?.roles?.nombre==="Superadministrador"||currentPermissions.has(code);}function applyNavigationPermissions(){$$(".nav[data-permission]").forEach(node=>{const allowed=node.dataset.permission.split("|").some(hasPermission);node.classList.toggle("permission-hidden",!allowed);node.disabled=!allowed;});const label=$(".nav-label");if(label){const adminVisible=$$(".nav-label~.nav[data-permission]").some(n=>!n.classList.contains("permission-hidden"));label.classList.toggle("permission-hidden",!adminVisible);}}
+function hasPermission(code){return currentProfile?.roles?.nombre==="Superadministrador"||currentPermissions.has(code);}function applyNavigationPermissions(){const role=String(currentProfile?.roles?.nombre||"").toLowerCase();$$(".nav[data-permission]").forEach(node=>{const permissionAllowed=node.dataset.permission.split("|").some(hasPermission),roleAllowed=(!node.dataset.onlyRole||node.dataset.onlyRole===role)&&(!node.dataset.hideRole||node.dataset.hideRole!==role),allowed=permissionAllowed&&roleAllowed;node.classList.toggle("permission-hidden",!allowed);node.disabled=!allowed;});const label=$(".nav-label");if(label){const adminVisible=$$(".nav-label~.nav[data-permission]").some(n=>!n.classList.contains("permission-hidden"));label.classList.toggle("permission-hidden",!adminVisible);}}
 async function loadSubscriptionAccess(){const {data,error}=await supabase.from("configuracion_suscripcion").select("estado").eq("id",true).maybeSingle();if(!error&&data?.estado)subscriptionAccessState=data.estado;const restricted=subscriptionAccessState==="restringida";["appointments","sales"].forEach(view=>{const node=document.querySelector(`.nav[data-view="${view}"]`);if(!node)return;node.classList.toggle("subscription-locked",restricted);node.disabled=restricted||node.classList.contains("permission-hidden");node.title=restricted?"Servicio temporalmente restringido por pago pendiente":"";});if(restricted)toast("Servicio temporalmente restringido por pago pendiente. El propietario puede regularizarlo en Mi suscripción.");}
 
 let adminRoles=[],adminPermissions=[],adminRolePermissions=[],adminUsers=[];

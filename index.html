@@ -13,7 +13,7 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
   <link rel="apple-touch-icon" sizes="192x192" href="./icon-192.png">
-  <link rel="stylesheet" href="./styles.css?v=22">
+  <link rel="stylesheet" href="./styles.css?v=24">
 </head>
 <body>
   <div id="loading" class="loading"><span></span><p>Preparando Centro Óptico…</p></div>
@@ -49,10 +49,11 @@
       <div class="brand"><img src="./logo.png" alt="Centro Óptico"><div><strong>Centro Óptico</strong><small>Colombia Group</small></div></div>
       <nav>
         <button class="nav active" data-view="dashboard">⌂ <span>Inicio</span></button>
-        <button class="nav" data-view="patients" data-permission="pacientes.ver">♙ <span>Pacientes</span></button>
+        <button class="nav" data-view="patients" data-permission="pacientes.ver" data-hide-role="promotor">♙ <span>Pacientes</span></button>
         <button class="nav" data-view="journeys" data-permission="jornadas.ver">◫ <span>Jornadas</span></button>
         <button class="nav" data-view="brigades" data-permission="asistencia.ver|brigadas.ver">⌖ <span>Brigadas</span></button>
         <button class="nav" data-view="appointments" data-permission="agenda.ver">▣ <span>Agenda</span></button>
+        <button class="nav" data-view="patient_lookup" data-permission="pacientes.ver|agenda.crear" data-only-role="promotor">♙ <span>Usuarios</span></button>
         <button class="nav" data-view="callcenter" data-permission="call_center.ver">☎ <span>Call Center CRM</span></button>
         <button class="nav" data-view="consultations" data-permission="consultas.ver">◎ <span>Consultas</span></button>
         <button class="nav" data-view="sales" data-permission="ventas.ver">◇ <span>Ventas</span></button>
@@ -215,6 +216,6 @@
   <button id="helpLauncher" class="help-launcher hidden" aria-label="Abrir asistente de ayuda">?</button>
   <section id="helpAssistant" class="help-assistant hidden" aria-label="Asistente de ayuda"><header><div><span>?</span><div><strong>Asistente de ayuda</strong><small>Centro Óptico · Respuestas automáticas</small></div></div><button id="closeHelp" aria-label="Cerrar asistente">×</button></header><div id="helpMessages" class="help-messages"></div><div id="helpQuick" class="help-quick"></div><form id="helpForm"><input id="helpInput" autocomplete="off" maxlength="240" placeholder="Escribe tu pregunta…" aria-label="Pregunta para el asistente"><button type="submit">Enviar</button></form></section>
   <div id="toast" class="toast"></div>
-  <script type="module" src="./app.js?v=42"></script>
+  <script type="module" src="./app.js?v=45"></script>
 </body>
 </html>
