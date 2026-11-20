@@ -160,6 +160,11 @@ $$(".nav[data-view]").forEach(button => button.onclick = async () => {
 
 async function renderDashboard() {
   if(String(currentProfile?.roles?.nombre||"").toLowerCase()==="promotor")return renderPromoterDashboard();
+  // La vista se reconstruye cada vez que se vuelve a Inicio. Su estado de
+  // ventas también debe reiniciarse para enlazar los nuevos controles y
+  // volver a cargar sus fechas e indicadores.
+  dashboardSalesLoaded=false;
+  dashboardSalesData={sales:[],appointments:[],movements:[],journeys:[],promoters:[]};
   $("#pageName").textContent = "Panel principal";
   $("#content").innerHTML = `
     <div class="page-hero"><div><h1>Hola, ${escapeHTML((currentProfile?.nombre_completo || "Yohan").split(" ")[0])}</h1><p>Consulta la operación y el desempeño comercial desde un solo lugar.</p></div><span class="badge">Vista local</span></div>
