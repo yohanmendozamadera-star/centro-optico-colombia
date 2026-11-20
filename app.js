@@ -7,6 +7,12 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
 const LOCAL_PREVIEW = ["localhost", "127.0.0.1"].includes(location.hostname) || location.protocol === "file:";
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
+document.addEventListener("DOMContentLoaded",()=>{
+  ["journeyPrice","appointmentPayment","attendancePayment","tariffPrice","saleProductPrice","saleDiscount","salePayment","collectSaleValue"].forEach(id=>{
+    const input=document.getElementById(id);
+    if(input){input.step="1";input.inputMode="numeric";}
+  });
+});
 let currentProfile = null;
 let currentPermissions = new Set();
 let patients = [];
@@ -368,22 +374,6 @@ async function chooseBrigadeForAppointment(){
   if(!journeys.length)return toast("Primero debes crear una jornada abierta o inactiva.");
   openAppointment(null,null,null,true);
 }
-async function loadBrigades(){
-  const [{data:jData,error:jError},{data:bData,error:bError}]=await Promise.all([supabase.from("jornadas").select("id,nombre,fecha_brigada,estado,municipio,lugar,direccion").eq("activo",true).eq("eliminado",false).in("estado",["abierta","inactiva"]).order("fecha_brigada"),supabase.from("brigadas").select("*, jornadas(nombre,municipio,estado)").eq("activo",true).eq("eliminado",false).order("fecha",{ascending:false})]);
-  if(jError||bError){$("#brigadeRows").innerHTML=`<tr><td colspan="7" class="empty"><b>No fue posible cargar brigadas</b>${escapeHTML(errorText(jError||bError))}</td></tr>`;return;}
-  journeys=jData||[];brigades=bData||[];
-  const journeyIds=journeys.map(j=>j.id);let agendaData=[];
-  if(journeyIds.length){const agendaResult=await supabase.from("agendamientos").select("estado").in("jornada_id",journeyIds).eq("activo",true);if(!agendaResult.error)agendaData=agendaResult.data||[];}
-  $("#pendingBrigadePatients").textContent=agendaData.filter(a=>["registrada","confirmada"].includes(a.estado)).length;$("#completedBrigadePatients").textContent=agendaData.filter(a=>a.estado==="cumplida").length;$("#cancelledBrigadePatients").textContent=agendaData.filter(a=>["cancelada","incumplida"].includes(a.estado)).length;
-  paintBrigades(brigades);
-}
-function filterBrigadeRows(){const q=clean($("#brigadeSearch")?.value).toLowerCase(),status=$("#brigadeStatusFilter")?.value||"";paintBrigades(brigades.filter(b=>(!q||[b.nombre,b.lugar,b.jornadas?.nombre,b.jornadas?.municipio].some(v=>String(v||"").toLowerCase().includes(q)))&&(!status||b.estado===status)));}
-function paintBrigades(list){
-  if(!list.length)return $("#brigadeRows").innerHTML=`<tr><td colspan="7" class="empty"><b>No encontramos brigadas</b>Crea una brigada asociada a una jornada.</td></tr>`;
-  $("#brigadeRows").innerHTML=list.map(b=>`<tr><td><strong>${escapeHTML(b.nombre)}</strong><small>${escapeHTML(b.jornadas?.municipio||"")}</small></td><td>${escapeHTML(b.jornadas?.nombre||"—")}</td><td>${shortDate(b.fecha)}<small>${escapeHTML((b.hora_inicial||"").slice(0,5))}${b.hora_final?" – "+b.hora_final.slice(0,5):""}</small></td><td>${escapeHTML(b.lugar)}</td><td>${b.capacidad_maxima||"Sin límite"}</td><td><span class="badge">${capitalize(b.estado.replace("_"," "))}</span></td><td><div class="inline-actions"><button class="primary manage-brigade" data-id="${b.id}">Pacientes</button><button class="secondary edit-brigade" data-id="${b.id}">Editar</button></div></td></tr>`).join("");
-  $$(".edit-brigade").forEach(btn=>btn.onclick=()=>openBrigade(brigades.find(b=>b.id===btn.dataset.id)));
-  $$(".manage-brigade").forEach(btn=>btn.onclick=()=>manageBrigadePatients(brigades.find(b=>b.id===btn.dataset.id)));
-}
 async function openBrigade(brigade=null){
   if(!journeys.length){const {data}=await supabase.from("jornadas").select("id,nombre,fecha_brigada").eq("activo",true).eq("eliminado",false).order("fecha_brigada");journeys=data||[];}
   if(!journeys.length)return toast("Primero debes crear una jornada.");
@@ -396,7 +386,7 @@ $$("[data-close-brigade]").forEach(b=>b.onclick=()=>$("#brigadeModal").classList
 $("#brigadeForm").onsubmit=async event=>{
   event.preventDefault();const id=$("#brigadeId").value;
   const record={jornada_id:$("#brigadeJourney").value,nombre:clean($("#brigadeName").value),fecha:$("#brigadeDate").value,estado:$("#brigadeStatus").value,hora_inicial:$("#brigadeStart").value||null,hora_final:$("#brigadeEnd").value||null,capacidad_maxima:Number($("#brigadeCapacity").value)||null,lugar:clean($("#brigadePlace").value),direccion:clean($("#brigadeAddress").value)||null,observaciones:clean($("#brigadeNotes").value)||null};
-  const query=id?supabase.from("brigadas").update(record).eq("id",id):supabase.from("brigadas").insert(record);const {error}=await query;if(error)return toast(errorText(error));$("#brigadeModal").classList.add("hidden");toast(id?"Brigada actualizada.":"Brigada creada.");if($("#brigadeRows"))await loadBrigades();
+  const query=id?supabase.from("brigadas").update(record).eq("id",id):supabase.from("brigadas").insert(record);const {error}=await query;if(error)return toast(errorText(error));$("#brigadeModal").classList.add("hidden");toast(id?"Brigada actualizada.":"Brigada creada.");await renderBrigades();
 };
 async function manageBrigadePatients(brigade){
   $("#pageName").textContent="Pacientes de brigada";
@@ -409,7 +399,7 @@ async function manageBrigadePatients(brigade){
     <div id="brigadePatientCards" class="patient-crm-grid"><div class="crm-empty">Cargando pacientes…</div></div>`;
   if($("#backToBrigades"))$("#backToBrigades").onclick=renderBrigades;$("#addFromBrigade").onclick=()=>openAppointment(null,brigade.jornada_id,brigade.id);
   const [agendaResult,movementResult]=await Promise.all([supabase.from("agendamientos").select("*, pacientes(id,nombre_completo,numero_identificacion,celular_principal), jornadas(id,nombre,fecha_brigada,municipio)").eq("jornada_id",brigade.jornada_id).eq("activo",true).order("created_at"),supabase.from("movimientos_financieros").select("tipo,valor,canal,brigada_id").eq("jornada_id",brigade.jornada_id).eq("estado","activo")]);
-  if(agendaResult.error||movementResult.error){$("#brigadePatientRows").innerHTML=`<tr><td colspan="6" class="empty">${escapeHTML(errorText(agendaResult.error||movementResult.error))}</td></tr>`;return;}
+  if(agendaResult.error||movementResult.error){$("#brigadePatientCards").innerHTML=`<div class="crm-empty">${escapeHTML(errorText(agendaResult.error||movementResult.error))}</div>`;return;}
   appointments=agendaResult.data||[];const movements=movementResult.data||[],agendaRevenue=movements.filter(m=>m.tipo==="abono_agendamiento").reduce((n,m)=>n+Number(m.valor),0),brigadeRevenue=movements.filter(m=>m.tipo==="pago_brigada"&&m.brigada_id===brigade.id).reduce((n,m)=>n+Number(m.valor),0);
   appointments=appointments.filter(a=>!a.brigada_id||a.brigada_id===brigade.id);
   $("#brigadeFinanceStats").innerHTML=`<article class="stat"><span>Recaudo en agendamiento</span><strong>${cop(agendaRevenue)}</strong></article><article class="stat"><span>Recaudo en brigada</span><strong>${cop(brigadeRevenue)}</strong></article><article class="stat"><span>Recaudo total</span><strong>${cop(agendaRevenue+brigadeRevenue)}</strong></article><article class="stat"><span>Pacientes del día</span><strong>${appointments.length}</strong></article>`;

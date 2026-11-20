@@ -1,0 +1,16 @@
+const fs=require("fs");
+const path=require("path");
+const root=path.resolve(__dirname,"..");
+const html=fs.readFileSync(path.join(root,"index.html"),"utf8");
+const js=fs.readFileSync(path.join(root,"app.js"),"utf8");
+const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(match=>match[1]);
+const refs=[...js.matchAll(/\$\("#([A-Za-z][A-Za-z0-9_-]*)"\)/g)].map(match=>match[1]);
+const dynamicIds=[...js.matchAll(/\bid="([^"]+)"/g)].map(match=>match[1]);
+const duplicateIds=[...new Set(ids.filter((id,index)=>ids.indexOf(id)!==index))];
+const missingIds=[...new Set(refs.filter(id=>!ids.includes(id)&&!dynamicIds.includes(id)))];
+const rpcs=[...new Set([...js.matchAll(/\.rpc\("([^"]+)"/g)].map(match=>match[1]))].sort();
+const moneyIds=["journeyPrice","appointmentPayment","attendancePayment","tariffPrice","saleProductPrice","saleDiscount","salePayment","collectSaleValue"];
+const initializerPresent=moneyIds.every(id=>js.includes(`"${id}"`))&&js.includes('input.step="1"');
+const result={htmlIds:ids.length,jsIdReferences:refs.length,duplicateIds,missingIds,rpcs,moneyInputInitializer:initializerPresent};
+console.log(JSON.stringify(result,null,2));
+if(duplicateIds.length||missingIds.length||!initializerPresent)process.exitCode=1;

@@ -1,5 +1,5 @@
-const CACHE_NAME="centro-optico-v45";
-const APP_SHELL=["./","./index.html","./styles.css?v=24","./app.js?v=45","./config.js","./logo.png","./icon-192.png","./icon-512.png","./manifest.webmanifest"];
+const CACHE_NAME="centro-optico-v46";
+const APP_SHELL=["./","./index.html","./styles.css?v=24","./app.js?v=46","./config.js","./logo.png","./icon-192.png","./icon-512.png","./manifest.webmanifest"];
 
 self.addEventListener("install",event=>{
   event.waitUntil(caches.open(CACHE_NAME).then(cache=>cache.addAll(APP_SHELL)));
