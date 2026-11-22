@@ -22,6 +22,7 @@ let appointments = [];
 let appointmentRegistrars = [];
 let appointmentContextBrigade = null;
 let patientCreatedFromAppointment = false;
+let pendingAppointmentPatient = null;
 let callGestures = [];
 let callCenterJourneyId = "";
 let attendanceBrigade = null;
@@ -321,6 +322,11 @@ $("#patientForm").onsubmit=async event=>{
   const {data:duplicates,error:duplicateError}=await supabase.rpc("buscar_duplicado_paciente",{p_paciente_id:id||null,p_identificacion:record.numero_identificacion,p_celular:null});
   if(duplicateError)return toast(errorText(duplicateError));const duplicate=duplicates?.[0];
   if(duplicate){const alert=$("#duplicateAlert");alert.textContent=`La identificación ${duplicate.numero_identificacion} ya pertenece a ${duplicate.nombre_completo}. La identificación debe ser única; el celular sí puede compartirse entre familiares.`;alert.classList.remove("hidden");return;}
+  if(patientCreatedFromAppointment&&!id){
+    patientCreatedFromAppointment=false;pendingAppointmentPatient={...record,id:"__pending_appointment_patient__"};
+    $("#patientModal").classList.add("hidden");selectAppointmentPatient(pendingAppointmentPatient);syncPendingAppointmentPatient();$("#appointmentModal").classList.remove("hidden");
+    return toast("Completa el agendamiento para guardar al paciente.");
+  }
   let savedPatient=null,error=null;
   if(id){const result=await supabase.from("pacientes").update(record).eq("id",id).select().single();savedPatient=result.data;error=result.error;}
   else{const result=await supabase.from("pacientes").insert(record).select().single();savedPatient=result.data;error=result.error;}
@@ -512,11 +518,12 @@ async function loadAppointmentCatalogs(includeInactive=false){
   if(j.error||b.error)throw(j.error||b.error);patients=[];journeys=j.data||[];brigades=b.data||[];
 }
 async function openAppointment(appointment=null,forcedJourneyId=null,forcedBrigadeId=null,fromBrigadeModule=false){
+  pendingAppointmentPatient=null;
   appointmentFromBrigadeModule=fromBrigadeModule;
   try{await loadAppointmentCatalogs(Boolean(forcedJourneyId)||fromBrigadeModule);}catch(error){return toast(errorText(error));}
   await loadAppointmentRegistrars();
   if(!journeys.length)return toast("No hay jornadas abiertas.");
-  $("#appointmentForm").reset();$("#appointmentId").value=appointment?.id||"";$("#appointmentModalTitle").textContent=appointment?"Editar agendamiento":"Nuevo agendamiento";
+  $("#appointmentForm").reset();$("#appointmentId").value=appointment?.id||"";$("#appointmentModalTitle").textContent=appointment?"Editar agendamiento":"Nuevo agendamiento";syncPendingAppointmentPatient();
   const requiresJourneyChoice=!appointment&&!forcedJourneyId&&journeys.length>1;
   $("#appointmentJourney").innerHTML=`${requiresJourneyChoice?'<option value="">Selecciona la jornada correcta…</option>':""}${journeys.map(j=>`<option value="${j.id}">${escapeHTML(j.nombre)} · ${escapeHTML(j.municipio)} · ${shortDate(j.fecha_brigada)}</option>`).join("")}`;
   $("#appointmentPatient").value="";$("#appointmentPatientSearch").value="";$("#selectedPatient").textContent="Ningún paciente seleccionado";$("#patientSearchResults").classList.add("hidden");$("#patientNotFound").classList.add("hidden");
@@ -545,7 +552,16 @@ const normalizePatientIdentification=value=>String(value||"").replace(/[^0-9A-Za
 const normalizePatientPhone=value=>{const digits=String(value||"").replace(/\D/g,"");return digits.length===12&&digits.startsWith("57")?digits.slice(2):digits;};
 function selectAppointmentPatient(patient){$("#appointmentPatient").value=patient.id;$("#appointmentPatientSearch").value=patient.nombre_completo;$("#selectedPatient").textContent=`Seleccionado: ${patient.nombre_completo} · ${patient.numero_identificacion} · ${patient.celular_principal}`;$("#patientSearchResults").classList.add("hidden");$("#patientNotFound").classList.add("hidden");}
 function recalculateAppointment(){const journey=journeys.find(j=>j.id===$("#appointmentJourney").value),price=Number(journey?.valor_consulta||0),payment=Number($("#appointmentPayment").value||0);$("#appointmentPrice").value=cop(price);$("#appointmentBalance").value=cop(Math.max(price-payment,0));}
-$$("[data-close-appointment]").forEach(b=>b.onclick=()=>$("#appointmentModal").classList.add("hidden"));
+function syncPendingAppointmentPatient(){
+  const notice=$("#appointmentPendingPatientNotice"),subtitle=$("#appointmentModalSubtitle");
+  if(notice)notice.classList.toggle("hidden",!pendingAppointmentPatient);
+  if(subtitle)subtitle.textContent=pendingAppointmentPatient?"El paciente y la cita se guardarán juntos al finalizar.":"Relaciona un paciente con una jornada abierta.";
+}
+function closeAppointment(){
+  if(pendingAppointmentPatient&&!confirm("¿Salir sin terminar el agendamiento?\n\nEl paciente todavía no ha sido guardado. Si sales ahora, perderás los datos ingresados y no quedará registrado ni agendado.\n\nPulsa Cancelar para continuar agendando."))return;
+  pendingAppointmentPatient=null;syncPendingAppointmentPatient();$("#appointmentModal").classList.add("hidden");
+}
+$$("[data-close-appointment]").forEach(b=>b.onclick=closeAppointment);
 $("#appointmentForm").onsubmit=async event=>{
   event.preventDefault();const id=$("#appointmentId").value,journey=journeys.find(j=>j.id===$("#appointmentJourney").value);
   if(!journey)return toast("Debes seleccionar la jornada correcta antes de guardar.");
@@ -556,9 +572,19 @@ $("#appointmentForm").onsubmit=async event=>{
   if(appointmentFromBrigadeModule&&!appointmentContextBrigade){const operationalBrigade=await ensureOperationalBrigade(journey);if(!operationalBrigade)return;appointmentContextBrigade=operationalBrigade.id;}
   const record={paciente_id:$("#appointmentPatient").value,jornada_id:journey.id,brigada_id:appointmentContextBrigade,numero_volante:clean($("#appointmentFlyer").value),valor_consulta:price,saldo_favor_aplicado:credit,abono:payment,estado:previous?.estado||"registrada",observaciones:clean($("#appointmentNotes").value)||null},responsible=canManageAppointmentRegistrar()?$("#appointmentRegistrar").value:currentProfile.id;
   if(!responsible)return toast("Selecciona la persona responsable del agendamiento.");
-  if(!id){const rpc=canManageAppointmentRegistrar()?"registrar_agendamiento_asignado":"registrar_agendamiento",params={p_paciente:record.paciente_id,p_jornada:record.jornada_id,p_brigada:record.brigada_id,p_volante:record.numero_volante,p_valor:record.valor_consulta,p_saldo_favor:record.saldo_favor_aplicado,p_abono:record.abono,p_estado:record.estado,p_observaciones:record.observaciones};if(canManageAppointmentRegistrar())params.p_responsable=responsible;const {error}=await supabase.rpc(rpc,params);if(error)return toast(errorText(error));}
+  if(!id){
+    if(pendingAppointmentPatient){
+      const {id:_pendingId,...patientRecord}=pendingAppointmentPatient;
+      const {error}=await supabase.rpc("registrar_paciente_y_agendamiento",{p_paciente:patientRecord,p_jornada:record.jornada_id,p_brigada:record.brigada_id,p_volante:record.numero_volante,p_valor:record.valor_consulta,p_saldo_favor:record.saldo_favor_aplicado,p_abono:record.abono,p_estado:record.estado,p_observaciones:record.observaciones,p_responsable:canManageAppointmentRegistrar()?responsible:null});
+      if(error)return toast(errorText(error));
+    }else{
+      const rpc=canManageAppointmentRegistrar()?"registrar_agendamiento_asignado":"registrar_agendamiento",params={p_paciente:record.paciente_id,p_jornada:record.jornada_id,p_brigada:record.brigada_id,p_volante:record.numero_volante,p_valor:record.valor_consulta,p_saldo_favor:record.saldo_favor_aplicado,p_abono:record.abono,p_estado:record.estado,p_observaciones:record.observaciones};
+      if(canManageAppointmentRegistrar())params.p_responsable=responsible;
+      const {error}=await supabase.rpc(rpc,params);if(error)return toast(errorText(error));
+    }
+  }
   else{if(payment<Number(previous.abono))return toast("No se puede reducir un abono. Debe registrarse una anulación.");const {error}=await supabase.from("agendamientos").update(record).eq("id",id);if(error)return toast(errorText(error));if(canManageAppointmentRegistrar()&&responsible!==previous.creado_por){const {error:responsibleError}=await supabase.rpc("asignar_responsable_agendamiento",{p_agendamiento:id,p_responsable:responsible});if(responsibleError)return toast(errorText(responsibleError));}const difference=payment-Number(previous.abono);if(difference>0){const {error:movementError}=await supabase.from("movimientos_financieros").insert({paciente_id:record.paciente_id,jornada_id:record.jornada_id,brigada_id:record.brigada_id,agendamiento_id:id,tipo:"abono_agendamiento",valor:difference});if(movementError)return toast(errorText(movementError));}}
-  $("#appointmentModal").classList.add("hidden");toast(id?"Agendamiento actualizado.":"Paciente agendado.");if($("#appointmentRows"))await loadAppointments();
+  pendingAppointmentPatient=null;syncPendingAppointmentPatient();$("#appointmentModal").classList.add("hidden");toast(id?"Agendamiento actualizado.":"Paciente y agendamiento guardados correctamente.");if($("#appointmentRows"))await loadAppointments();
 };
 async function changeAppointmentState(id,state){const {error}=await supabase.from("agendamientos").update({estado:state}).eq("id",id);if(error)return toast(errorText(error));toast("Cita confirmada.");await loadAppointments();}
 function openWhatsApp(a){const phone=phoneDigits(a.pacientes?.celular_principal||"");if(!phone)return toast("El paciente no tiene celular.");const colombia=phone.length===10?"57"+phone:phone,msg=`Hola, ${a.pacientes.nombre_completo}. Te recordamos tu cita para ${a.jornadas.nombre}, programada para el ${shortDate(a.jornadas.fecha_brigada)}. Por favor confirma tu asistencia.`;window.open(`https://wa.me/${colombia}?text=${encodeURIComponent(msg)}`,"_blank","noopener");}
