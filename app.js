@@ -310,15 +310,37 @@ async function loadPatientHistory(patient){
 }
 function historyGroup(title,items){return `<section class="history-group"><h3>${title}</h3>${items.length?items.join(""):'<p class="history-empty">Sin registros.</p>'}</section>`;}
 function patientAuditSummary(entry){if(entry.accion==="insert")return "Paciente creado";const before=entry.informacion_anterior||{},after=entry.informacion_nueva||{};const labels={numero_identificacion:"identificación",nombre_completo:"nombre",celular_principal:"celular principal",celular_alternativo:"celular alternativo",correo:"correo",fecha_nacimiento:"fecha de nacimiento",genero:"género"};const changes=Object.keys(labels).filter(k=>String(before[k]??"")!==String(after[k]??"")).map(k=>`${labels[k]}: “${before[k]??"vacío"}” → “${after[k]??"vacío"}”`);return changes.length?escapeHTML(changes.join(" · ")):"Registro actualizado";}
+const NUMERIC_PATIENT_DOCUMENTS=new Set(["CC","TI"]);
+function patientIdentificationMessage(type,value){
+  const identification=clean(value),documentType=String(type||"").toUpperCase(),numeric=NUMERIC_PATIENT_DOCUMENTS.has(documentType);
+  if(!identification)return "Escribe la identificación del paciente.";
+  if(numeric&&!/^\d+$/.test(identification))return "Para cédula de ciudadanía y tarjeta de identidad, escribe únicamente números.";
+  if(documentType==="OTRO"&&!/^[0-9A-Za-z-]+$/.test(identification))return "Para identificación provisional, escribe letras, números o guiones, sin espacios.";
+  if(!numeric&&documentType!=="OTRO"&&!/^[0-9A-Za-z]+$/.test(identification))return "Para documentos extranjeros, escribe únicamente letras y números, sin espacios.";
+  return "";
+}
+function configurePatientIdentification(){
+  const type=$("#documentType"),input=$("#documentNumber");if(!type||!input)return;
+  const numeric=NUMERIC_PATIENT_DOCUMENTS.has(type.value);
+  input.inputMode=numeric?"numeric":"text";
+  input.pattern=numeric?"[0-9]+":type.value==="OTRO"?"[0-9A-Za-z-]+":"[0-9A-Za-z]+";
+  input.title=numeric?"Escribe únicamente números.":type.value==="OTRO"?"Escribe letras, números o guiones, sin espacios.":"Escribe únicamente letras y números, sin espacios.";
+  input.setCustomValidity(patientIdentificationMessage(type.value,input.value));
+}
 function openPatient(patient=null) {
   $("#patientForm").reset(); $("#patientId").value=patient?.id||""; $("#patientModalTitle").textContent=patient?"Editar paciente":"Nuevo paciente"; $("#duplicateAlert").classList.add("hidden");
   if(patient){ $("#documentType").value=patient.tipo_identificacion;$("#documentNumber").value=patient.numero_identificacion;$("#fullName").value=patient.nombre_completo;$("#phone").value=patient.celular_principal;$("#alternatePhone").value=patient.celular_alternativo||"";$("#gender").value=patient.genero||"";$("#notes").value=patient.observaciones||"";}
+  configurePatientIdentification();
   $("#patientModal").classList.remove("hidden");
 }
+$("#documentType").onchange=configurePatientIdentification;
+$("#documentNumber").oninput=()=>{$("#documentNumber").setCustomValidity(patientIdentificationMessage($("#documentType").value,$("#documentNumber").value));};
 $$("[data-close]").forEach(btn=>btn.onclick=()=>{ $("#patientModal").classList.add("hidden"); if(patientCreatedFromAppointment){patientCreatedFromAppointment=false;$("#appointmentModal").classList.remove("hidden");} });
 $("#patientForm").onsubmit=async event=>{
   event.preventDefault(); const id=$("#patientId").value;
   const record={tipo_identificacion:$("#documentType").value,numero_identificacion:clean($("#documentNumber").value),nombre_completo:clean($("#fullName").value),celular_principal:clean($("#phone").value),celular_alternativo:clean($("#alternatePhone").value)||null,genero:$("#gender").value||null,observaciones:clean($("#notes").value)||null};
+  const identificationError=patientIdentificationMessage(record.tipo_identificacion,record.numero_identificacion);
+  if(identificationError){$("#documentNumber").setCustomValidity(identificationError);$("#documentNumber").reportValidity();$("#documentNumber").focus();return;}
   const {data:duplicates,error:duplicateError}=await supabase.rpc("buscar_duplicado_paciente",{p_paciente_id:id||null,p_identificacion:record.numero_identificacion,p_celular:null});
   if(duplicateError)return toast(errorText(duplicateError));const duplicate=duplicates?.[0];
   if(duplicate){const alert=$("#duplicateAlert");alert.textContent=`La identificación ${duplicate.numero_identificacion} ya pertenece a ${duplicate.nombre_completo}. La identificación debe ser única; el celular sí puede compartirse entre familiares.`;alert.classList.remove("hidden");return;}
