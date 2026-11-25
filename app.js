@@ -26,6 +26,7 @@ let pendingAppointmentPatient = null;
 let callGestures = [];
 let callCenterJourneyId = "";
 let attendanceBrigade = null;
+let returnToGlobalBrigadeList = false;
 let brigadeCrmFilter = "por_atender";
 let brigadeVisibleLimit = 25;
 let callCenterCrmFilter = "todos";
@@ -421,9 +422,7 @@ async function renderBrigades(){
   if(jError||bError){$("#content").innerHTML=`<div class="empty"><b>No fue posible abrir la brigada</b>${escapeHTML(errorText(jError||bError))}</div>`;return;}
   journeys=jData||[];brigades=bData||[];
   if(!journeys.length){$("#content").innerHTML='<div class="page-hero"><div><h1>Brigadas abiertas</h1><p>Atención de pacientes por jornada.</p></div></div><article class="card"><div class="empty"><b>No hay jornadas abiertas</b>Activa una jornada para consultar y atender sus pacientes.</div></article>';return;}
-  if(journeys.length===1){const brigade=await ensureOperationalBrigade(journeys[0]);if(brigade)await manageBrigadePatients(brigade);return;}
-  $("#content").innerHTML=`<div class="page-hero"><div><h1>Brigadas abiertas</h1><p>Selecciona la jornada que vas a atender, sin importar su fecha programada.</p></div></div><div class="patient-crm-grid">${journeys.map(j=>`<article class="patient-crm-card"><h3>${escapeHTML(j.nombre)}</h3><p>${escapeHTML(j.municipio)} · ${shortDate(j.fecha_brigada)}</p><p>${escapeHTML(j.lugar)}</p><button class="primary open-today-journey" data-id="${j.id}">Ver pacientes</button></article>`).join("")}</div>`;
-  $$(".open-today-journey").forEach(button=>button.onclick=async()=>{const journey=journeys.find(j=>j.id===button.dataset.id),brigade=await ensureOperationalBrigade(journey);if(brigade)await manageBrigadePatients(brigade);});
+  await manageOpenBrigadePatients();
 }
 async function ensureOperationalBrigade(journey){
   const existing=brigades.find(b=>b.jornada_id===journey.id);if(existing)return existing;
@@ -433,6 +432,28 @@ async function ensureOperationalBrigade(journey){
 async function chooseBrigadeForAppointment(){
   if(!journeys.length)return toast("Primero debes crear una jornada abierta o inactiva.");
   openAppointment(null,null,null,true);
+}
+async function manageOpenBrigadePatients(){
+  $("#pageName").textContent="Pacientes de brigada";brigadeCrmFilter="por_atender";brigadeVisibleLimit=25;
+  $("#content").innerHTML=`<div class="page-hero"><div><h1>Pacientes de brigadas abiertas</h1><p>Consulta todos los pacientes sin seleccionar primero una jornada.</p></div><button class="primary" id="addFromOpenBrigades">＋ Agendar paciente</button></div><div class="brigade-context">Busca por nombre, cédula, celular o volante. Cada paciente conserva visible la jornada a la que pertenece.</div><div class="stats" id="brigadeStatusStats"></div><div class="stats" id="brigadeFinanceStats"></div><div class="tools" style="padding:0 0 16px"><input class="search" id="brigadePatientSearch" placeholder="Buscar paciente, cédula, celular o volante…"></div><div id="brigadePatientCards" class="patient-crm-list"><div class="crm-empty">Cargando pacientes…</div></div><div id="brigadeMore" class="list-more hidden"></div>`;
+  $("#addFromOpenBrigades").onclick=chooseBrigadeForAppointment;
+  const journeyIds=journeys.map(j=>j.id),[agendaResult,movementResult]=await Promise.all([supabase.from("agendamientos").select("*, pacientes(id,nombre_completo,numero_identificacion,celular_principal), jornadas(id,nombre,fecha_brigada,municipio)").in("jornada_id",journeyIds).eq("activo",true).order("created_at"),supabase.from("movimientos_financieros").select("tipo,valor,canal,brigada_id,jornada_id").in("jornada_id",journeyIds).eq("estado","activo")]);
+  if(agendaResult.error||movementResult.error){$("#brigadePatientCards").innerHTML=`<div class="crm-empty">${escapeHTML(errorText(agendaResult.error||movementResult.error))}</div>`;return;}
+  appointments=agendaResult.data||[];const movements=movementResult.data||[],agendaRevenue=movements.filter(m=>m.tipo==="abono_agendamiento").reduce((n,m)=>n+Number(m.valor),0),brigadeRevenue=movements.filter(m=>m.tipo==="pago_brigada").reduce((n,m)=>n+Number(m.valor),0);
+  $("#brigadeFinanceStats").innerHTML=`<article class="stat"><span>Jornadas abiertas</span><strong>${journeys.length}</strong></article><article class="stat"><span>Pacientes asignados</span><strong>${appointments.length}</strong></article><article class="stat"><span>Recaudo en agendamiento</span><strong>${cop(agendaRevenue)}</strong></article><article class="stat"><span>Recaudo en brigada</span><strong>${cop(brigadeRevenue)}</strong></article>`;
+  const operationalBrigade=async appointment=>{let brigade=appointment.brigada_id?brigades.find(b=>b.id===appointment.brigada_id):brigades.find(b=>b.jornada_id===appointment.jornada_id);if(!brigade)brigade=await ensureOperationalBrigade(journeys.find(j=>j.id===appointment.jornada_id));return brigade;};
+  const paint=()=>{
+    const counts={por_atender:appointments.filter(a=>["registrada","confirmada"].includes(a.estado)).length,cumplida:appointments.filter(a=>a.estado==="cumplida").length,canceladas:appointments.filter(a=>["cancelada","incumplida"].includes(a.estado)).length};
+    $("#brigadeStatusStats").innerHTML=[["por_atender","Registradas y confirmadas"],["cumplida","Cumplidas"],["canceladas","Canceladas / incumplidas"]].map(([key,label])=>`<button class="stat filter-stat ${brigadeCrmFilter===key?"active":""}" data-filter="${key}"><span>${label}</span><strong>${counts[key]}</strong></button>`).join("");
+    $$(".filter-stat[data-filter]").forEach(b=>b.onclick=()=>{brigadeCrmFilter=b.dataset.filter;brigadeVisibleLimit=25;paint();});
+    const q=clean($("#brigadePatientSearch").value).toLowerCase(),matchesState=a=>brigadeCrmFilter==="por_atender"?["registrada","confirmada"].includes(a.estado):brigadeCrmFilter==="canceladas"?["cancelada","incumplida"].includes(a.estado):a.estado===brigadeCrmFilter,list=appointments.filter(a=>(q||matchesState(a))&&(!q||[a.pacientes?.nombre_completo,a.pacientes?.numero_identificacion,a.pacientes?.celular_principal,a.numero_volante].some(v=>String(v||"").toLowerCase().includes(q)))),visible=list.slice(0,brigadeVisibleLimit);
+    $("#brigadePatientCards").innerHTML=visible.length?visible.map(a=>`<article class="patient-crm-row"><div class="patient-crm-person"><h3>${escapeHTML(a.pacientes?.nombre_completo||"—")}</h3><p>${escapeHTML(a.pacientes?.numero_identificacion||"")} · ${escapeHTML(a.pacientes?.celular_principal||"")}</p></div><div class="patient-crm-appointment"><strong>${escapeHTML(a.jornadas?.nombre||"Jornada")}</strong><span>${a.jornadas?.fecha_brigada?shortDate(a.jornadas.fecha_brigada):""}</span><span>Volante ${escapeHTML(a.numero_volante)}</span><span class="badge state-${a.estado}">${appointmentState(a.estado)}</span></div><div class="patient-crm-values"><span>Valor <b>${cop(a.valor_consulta)}</b></span><span>Abono <b>${cop(a.abono)}</b></span><span>Saldo <b>${cop(a.saldo_pendiente)}</b></span></div>${["registrada","confirmada"].includes(a.estado)?`<div class="patient-crm-actions"><button class="primary attend-global-patient" data-id="${a.id}">Atender paciente</button><button class="secondary miss-global-patient" data-id="${a.id}">No asistió</button><button class="secondary move-global-patient" data-id="${a.id}">Cambiar jornada</button></div>`:'<div class="patient-crm-actions"><span class="badge">Sin acciones pendientes</span></div>'}</article>`).join(""):'<div class="crm-empty">No hay pacientes en esta bandeja.</div>';
+    const more=$("#brigadeMore");if(list.length>brigadeVisibleLimit){more.classList.remove("hidden");more.innerHTML=`<button class="secondary" id="loadMoreBrigadePatients">Mostrar 25 más</button><span>Mostrando ${brigadeVisibleLimit} de ${list.length}</span>`;$("#loadMoreBrigadePatients").onclick=()=>{brigadeVisibleLimit+=25;paint();};}else{more.classList.add("hidden");more.innerHTML="";}
+    $$(".attend-global-patient").forEach(b=>b.onclick=async()=>{const a=appointments.find(x=>x.id===b.dataset.id),brigade=await operationalBrigade(a);if(!brigade)return;if(!a.brigada_id){const {error}=await supabase.from("agendamientos").update({brigada_id:brigade.id}).eq("id",a.id);if(error)return toast(errorText(error));a.brigada_id=brigade.id;}openAttendance(a,brigade,true);});
+    $$(".move-global-patient").forEach(b=>b.onclick=()=>openAppointment(appointments.find(a=>a.id===b.dataset.id)));
+    $$(".miss-global-patient").forEach(b=>b.onclick=async()=>{const a=appointments.find(x=>x.id===b.dataset.id),brigade=await operationalBrigade(a);if(!brigade)return;if(!a.brigada_id){const update=await supabase.from("agendamientos").update({brigada_id:brigade.id}).eq("id",a.id);if(update.error)return toast(errorText(update.error));}if(!confirm(`¿Marcar como incumplida la cita de ${a.pacientes.nombre_completo}?`))return;const {error}=await supabase.rpc("marcar_cita_incumplida",{p_agendamiento:a.id,p_brigada:brigade.id,p_observaciones:"Paciente no asistió"});if(error)return toast(errorText(error));toast("Cita marcada como incumplida.");await renderBrigades();});
+  };
+  $("#brigadePatientSearch").oninput=()=>{brigadeVisibleLimit=25;paint();};paint();
 }
 async function openBrigade(brigade=null){
   if(!journeys.length){const {data}=await supabase.from("jornadas").select("id,nombre,fecha_brigada").eq("activo",true).eq("eliminado",false).order("fecha_brigada");journeys=data||[];}
@@ -478,15 +499,15 @@ async function manageBrigadePatients(brigade){
   };
   $("#brigadePatientSearch").oninput=()=>{brigadeVisibleLimit=25;paint();};paint();
 }
-function openAttendance(appointment,brigade){
-  attendanceBrigade=brigade;$("#attendanceForm").reset();$("#attendanceAppointmentId").value=appointment.id;$("#attendancePatientName").textContent=`${appointment.pacientes.nombre_completo} · ${appointment.numero_volante}`;$("#attendancePrice").value=cop(appointment.valor_consulta);$("#attendancePreviousPayment").value=cop(appointment.abono);$("#attendancePending").value=cop(appointment.saldo_pendiente);$("#attendancePayment").value=Number(appointment.saldo_pendiente);$("#attendancePayment").max=Number(appointment.saldo_pendiente);$("#attendanceModal").classList.remove("hidden");
+function openAttendance(appointment,brigade,globalView=false){
+  attendanceBrigade=brigade;returnToGlobalBrigadeList=globalView;$("#attendanceForm").reset();$("#attendanceAppointmentId").value=appointment.id;$("#attendancePatientName").textContent=`${appointment.pacientes.nombre_completo} · ${appointment.numero_volante}`;$("#attendancePrice").value=cop(appointment.valor_consulta);$("#attendancePreviousPayment").value=cop(appointment.abono);$("#attendancePending").value=cop(appointment.saldo_pendiente);$("#attendancePayment").value=Number(appointment.saldo_pendiente);$("#attendancePayment").max=Number(appointment.saldo_pendiente);$("#attendanceModal").classList.remove("hidden");
 }
 $$("[data-close-attendance]").forEach(b=>b.onclick=()=>$("#attendanceModal").classList.add("hidden"));
 $("#attendanceForm").onsubmit=async event=>{
   event.preventDefault();const appointmentId=$("#attendanceAppointmentId").value,payment=Number($("#attendancePayment").value||0);
   const appointment=appointments.find(a=>a.id===appointmentId);if(payment!==Number(appointment.saldo_pendiente))return toast("Para marcar cumplida debes completar exactamente el saldo pendiente.");
   const {error}=await supabase.rpc("completar_cita_brigada",{p_agendamiento:appointmentId,p_brigada:attendanceBrigade.id,p_pago:payment,p_metodo:$("#attendanceMethod").value,p_observaciones:clean($("#attendanceNotes").value)||null});
-  if(error)return toast(errorText(error));$("#attendanceModal").classList.add("hidden");toast("Pago registrado y cita cumplida.");await manageBrigadePatients(attendanceBrigade);
+  if(error)return toast(errorText(error));$("#attendanceModal").classList.add("hidden");toast("Pago registrado y cita cumplida.");if(returnToGlobalBrigadeList){returnToGlobalBrigadeList=false;await renderBrigades();}else await manageBrigadePatients(attendanceBrigade);
 };
 
 async function renderAppointments(){
