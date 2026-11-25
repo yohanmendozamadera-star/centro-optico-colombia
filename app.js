@@ -35,6 +35,9 @@ let productCatalogs={frames:[],lensTypes:[],materials:[],filters:[],treatments:[
 let invoiceConcepts=[];
 let saleConsultations=[];
 let patientSearchTimer=null;
+let appointmentSearchTimer=null;
+let appointmentVisibleLimit=50;
+let appointmentSearchMode=false;
 let municipalitySearchTimer=null;
 let municipalityMatches=[];
 let retryMunicipalitySearchTimer=null;
@@ -485,18 +488,19 @@ $("#attendanceForm").onsubmit=async event=>{
 };
 
 async function renderAppointments(){
-  const dateRange=getDateFilter("appointments");
+  const dateRange={from:todayValue(),to:todayValue()};
   const promoterView=normalizedRoleName()==="promotor";
   $("#pageName").textContent="Agenda";
   $("#content").innerHTML=`<div class="page-hero"><div><h1>Agenda</h1><p>Agendamientos, confirmación y seguimiento de pacientes.</p></div><button class="primary" id="newAppointment">＋ Agendar paciente</button></div>
     <div class="stats"><article class="stat"><span>Citas registradas</span><strong id="registeredAppointments">—</strong></article><article class="stat"><span>Confirmadas</span><strong id="confirmedAppointments">—</strong></article><article class="stat"><span>Saldo pendiente</span><strong id="pendingBalance">—</strong></article><article class="stat"><span>Abonos recibidos</span><strong id="receivedPayments">—</strong></article></div>
     <article class="card"><div class="card-head"><div><h2>Agendamientos</h2><p>Busca por paciente, identificación, celular o volante</p></div></div>
-    <div class="tools"><label class="date-filter">Registradas desde<input type="date" id="appointmentDateFrom" value="${dateRange.from}"></label><label class="date-filter">Registradas hasta<input type="date" id="appointmentDateTo" value="${dateRange.to}"></label><input class="search" id="appointmentSearch" placeholder="Buscar en la agenda…"><select id="appointmentStatusFilter"><option value="">Todos los estados</option><option value="registrada">Registradas</option><option value="confirmada">Confirmadas</option><option value="reprogramada">Reprogramadas</option><option value="cancelada">Canceladas</option></select><select id="appointmentJourneyFilter"><option value="">Todas las jornadas</option></select><select id="appointmentRegistrarFilter"><option value="">Agendado por: todos</option></select><button class="secondary" id="refreshAppointments">Actualizar</button><button class="secondary" id="exportAppointments">Descargar Excel</button></div>
-    <div class="table-wrap"><table><thead><tr><th>Paciente</th><th>Jornada</th><th>Agendado por</th><th>Volante</th><th>Valor</th><th>Abono</th><th>Saldo</th><th>Estado</th><th>Contacto</th><th>Acciones</th></tr></thead><tbody id="appointmentRows"><tr><td colspan="10" class="empty">Cargando agenda…</td></tr></tbody></table></div></article>`;
+    <div class="tools"><label class="date-filter">Registradas desde<input type="date" id="appointmentDateFrom" value="${dateRange.from}"></label><label class="date-filter">Registradas hasta<input type="date" id="appointmentDateTo" value="${dateRange.to}"></label><input class="search" id="appointmentSearch" placeholder="Buscar por nombre, cédula, celular o volante…"><select id="appointmentStatusFilter"><option value="">Todos los estados</option><option value="registrada">Registradas</option><option value="confirmada">Confirmadas</option><option value="reprogramada">Reprogramadas</option><option value="cancelada">Canceladas</option></select><select id="appointmentJourneyFilter"><option value="">Todas las jornadas</option></select><select id="appointmentRegistrarFilter"><option value="">Agendado por: todos</option></select><button class="primary" id="refreshAppointments">Consultar</button><button class="secondary" id="todayAppointments">Ver hoy</button><button class="secondary" id="exportAppointments">Descargar Excel</button></div>
+    <div class="table-wrap"><table><thead><tr><th>Paciente</th><th>Jornada</th><th>Agendado por</th><th>Volante</th><th>Valor</th><th>Abono</th><th>Saldo</th><th>Estado</th><th>Contacto</th><th>Acciones</th></tr></thead><tbody id="appointmentRows"><tr><td colspan="10" class="empty">Cargando agenda…</td></tr></tbody></table></div><div id="appointmentMore" class="list-more hidden"></div></article>`;
   $("#newAppointment").onclick=()=>openAppointment();
   if(promoterView){$("#exportAppointments")?.remove();$("#appointmentRegistrarFilter")?.remove();$("#appointmentJourneyFilter").options[0].textContent="Todas las jornadas abiertas";}
-  $("#refreshAppointments").onclick=loadAppointments;if($("#exportAppointments"))$("#exportAppointments").onclick=exportAppointments;$("#appointmentSearch").oninput=filterAppointmentRows;$("#appointmentStatusFilter").onchange=filterAppointmentRows;$("#appointmentJourneyFilter").onchange=filterAppointmentRows;if($("#appointmentRegistrarFilter"))$("#appointmentRegistrarFilter").onchange=filterAppointmentRows;
-  ["#appointmentDateFrom","#appointmentDateTo"].forEach(selector=>$(selector).onchange=loadAppointments);
+  $("#refreshAppointments").onclick=()=>{appointmentSearchMode=false;appointmentVisibleLimit=50;$("#appointmentSearch").value="";loadAppointments();};
+  $("#todayAppointments").onclick=()=>{const today=todayValue();$("#appointmentDateFrom").value=today;$("#appointmentDateTo").value=today;$("#appointmentSearch").value="";appointmentSearchMode=false;appointmentVisibleLimit=50;loadAppointments();};
+  if($("#exportAppointments"))$("#exportAppointments").onclick=exportAppointments;$("#appointmentSearch").oninput=handleAppointmentSearch;$("#appointmentStatusFilter").onchange=()=>filterAppointmentRows(true);$("#appointmentJourneyFilter").onchange=()=>filterAppointmentRows(true);if($("#appointmentRegistrarFilter"))$("#appointmentRegistrarFilter").onchange=()=>filterAppointmentRows(true);
   await loadAppointmentRegistrars();
   await loadAppointments();
 }
@@ -518,7 +522,23 @@ async function loadAppointments(){
   if(String(currentProfile?.roles?.nombre||"").toLowerCase()==="promotor")query=query.eq("creado_por",currentProfile.id);
   const {data,error}=await query;
   if(error){$("#appointmentRows").innerHTML=`<tr><td colspan="9" class="empty"><b>No fue posible cargar la agenda</b>${escapeHTML(errorText(error))}</td></tr>`;return;}
-  appointments=data||[];fillAppointmentJourneyFilter();fillAppointmentRegistrarFilter();filterAppointmentRows();
+  appointments=data||[];appointmentVisibleLimit=50;fillAppointmentJourneyFilter();fillAppointmentRegistrarFilter();filterAppointmentRows();
+}
+async function handleAppointmentSearch(){
+  const q=clean($("#appointmentSearch").value);clearTimeout(appointmentSearchTimer);
+  if(!q){appointmentSearchMode=false;appointmentVisibleLimit=50;return loadAppointments();}
+  if(q.length<3){appointmentSearchMode=true;appointments=[];updateAppointmentStats([]);$("#appointmentMore").classList.add("hidden");$("#appointmentRows").innerHTML='<tr><td colspan="10" class="empty"><b>Escribe al menos 3 caracteres</b>La búsqueda consulta toda la agenda, sin limitarse por fechas.</td></tr>';return;}
+  appointmentSearchTimer=setTimeout(()=>searchAppointmentsGlobally(q),350);
+}
+async function searchAppointmentsGlobally(q){
+  appointmentSearchMode=true;appointmentVisibleLimit=50;$("#appointmentRows").innerHTML='<tr><td colspan="10" class="empty">Buscando en toda la agenda…</td></tr>';
+  const numeric=/^[\d\s()+-]+$/.test(q),digits=q.replace(/\D/g,""),patientRequests=numeric?[supabase.rpc("buscar_pacientes",{p_tipo:"identificacion",p_valor:digits}),supabase.rpc("buscar_pacientes",{p_tipo:"celular",p_valor:digits})]:[supabase.rpc("buscar_pacientes",{p_tipo:"nombre",p_valor:q})];
+  const patientResults=await Promise.all(patientRequests);if(clean($("#appointmentSearch")?.value)!==q)return;const patientError=patientResults.find(x=>x.error)?.error;if(patientError){appointments=[];return $("#appointmentRows").innerHTML=`<tr><td colspan="10" class="empty"><b>No fue posible buscar</b>${escapeHTML(errorText(patientError))}</td></tr>`;}
+  const patientIds=[...new Set(patientResults.flatMap(x=>(x.data||[]).map(p=>p.id)))],select="*, pacientes(id,nombre_completo,numero_identificacion,celular_principal), jornadas(id,nombre,fecha_brigada,municipio), brigadas(id,nombre), perfiles:creado_por(id,nombre_completo)",scope=query=>normalizedRoleName()==="promotor"?query.eq("creado_por",currentProfile.id):query,requests=[];
+  if(patientIds.length)requests.push(scope(supabase.from("agendamientos").select(select).eq("activo",true).in("paciente_id",patientIds).order("created_at",{ascending:false}).limit(200)));
+  const safeFlyer=q.replace(/[%_,()]/g," ");requests.push(scope(supabase.from("agendamientos").select(select).eq("activo",true).ilike("numero_volante",`%${safeFlyer}%`).order("created_at",{ascending:false}).limit(200)));
+  const results=await Promise.all(requests);if(clean($("#appointmentSearch")?.value)!==q)return;const error=results.find(x=>x.error)?.error;if(error){appointments=[];return $("#appointmentRows").innerHTML=`<tr><td colspan="10" class="empty"><b>No fue posible buscar</b>${escapeHTML(errorText(error))}</td></tr>`;}
+  appointments=[...new Map(results.flatMap(x=>x.data||[]).map(a=>[a.id,a])).values()].sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));fillAppointmentJourneyFilter();fillAppointmentRegistrarFilter();filterAppointmentRows();
 }
 function updateAppointmentStats(list=appointments){
   $("#registeredAppointments").textContent=list.filter(a=>a.estado==="registrada").length;$("#confirmedAppointments").textContent=list.filter(a=>a.estado==="confirmada").length;$("#pendingBalance").textContent=cop(list.reduce((n,a)=>n+Number(a.saldo_pendiente||0),0));$("#receivedPayments").textContent=cop(list.reduce((n,a)=>n+Number(a.abono||0),0));
@@ -526,7 +546,7 @@ function updateAppointmentStats(list=appointments){
 function fillAppointmentJourneyFilter(){const select=$("#appointmentJourneyFilter"),current=select.value,items=[...new Map(appointments.map(a=>[a.jornada_id,a.jornadas])).entries()];select.innerHTML=`<option value="">Todas las jornadas</option>${items.map(([id,j])=>`<option value="${id}">${escapeHTML(j?.nombre||"Jornada")}</option>`).join("")}`;select.value=current;}
 function fillAppointmentRegistrarFilter(){const select=$("#appointmentRegistrarFilter");if(!select)return;const current=select.value,items=[...new Map([...appointmentRegistrars.map(x=>[x.id,x.nombre_completo]),...appointments.filter(x=>x.creado_por).map(x=>[x.creado_por,x.perfiles?.nombre_completo||"Sin nombre"])]).entries()];select.innerHTML='<option value="">Agendado por: todos</option>'+items.map(([id,name])=>`<option value="${id}">${escapeHTML(name)}</option>`).join("");select.value=items.some(x=>x[0]===current)?current:"";}
 function appointmentFilteredList(){const q=clean($("#appointmentSearch")?.value).toLowerCase(),status=$("#appointmentStatusFilter")?.value||"",journey=$("#appointmentJourneyFilter")?.value||"",registrar=$("#appointmentRegistrarFilter")?.value||"";return appointments.filter(a=>(!q||[a.pacientes?.nombre_completo,a.pacientes?.numero_identificacion,a.pacientes?.celular_principal,a.numero_volante,a.perfiles?.nombre_completo].some(v=>String(v||"").toLowerCase().includes(q)))&&(!status||a.estado===status)&&(!journey||a.jornada_id===journey)&&(!registrar||a.creado_por===registrar));}
-function filterAppointmentRows(){const list=appointmentFilteredList();updateAppointmentStats(list);paintAppointments(list);}
+function filterAppointmentRows(reset=false){if(reset)appointmentVisibleLimit=50;const list=appointmentFilteredList();updateAppointmentStats(list);paintAppointments(list.slice(0,appointmentVisibleLimit));const more=$("#appointmentMore");if(!more)return;if(list.length>appointmentVisibleLimit){more.classList.remove("hidden");more.innerHTML=`<button class="secondary" id="loadMoreAppointments">Mostrar 50 más</button><span>Mostrando ${appointmentVisibleLimit} de ${list.length}</span>`;$("#loadMoreAppointments").onclick=()=>{appointmentVisibleLimit+=50;filterAppointmentRows();};}else{more.classList.add("hidden");more.innerHTML="";}}
 function exportAppointments(){if(normalizedRoleName()==="promotor")return toast("El perfil Promotor no tiene permiso para descargar la agenda.");const list=appointmentFilteredList(),from=$("#appointmentDateFrom").value,to=$("#appointmentDateTo").value;if(!list.length)return toast("No hay agendamientos para exportar con estos filtros.");csvDownload(`agenda-${from}-a-${to}.csv`,["Fecha de registro","Paciente","Identificación","Celular","Jornada","Fecha de jornada","Agendado por","Volante","Valor","Abono","Saldo","Estado","Observaciones"],list.map(a=>[a.created_at,a.pacientes?.nombre_completo,a.pacientes?.numero_identificacion,a.pacientes?.celular_principal,a.jornadas?.nombre,a.jornadas?.fecha_brigada,a.perfiles?.nombre_completo,a.numero_volante,a.valor_consulta,a.abono,a.saldo_pendiente,appointmentState(a.estado),a.observaciones]));}
 function paintAppointments(list){
   if(!list.length)return $("#appointmentRows").innerHTML=`<tr><td colspan="10" class="empty"><b>No encontramos citas</b>Crea un agendamiento o cambia los filtros.</td></tr>`;
